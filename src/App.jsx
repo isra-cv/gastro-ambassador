@@ -15,7 +15,7 @@ import {
 } from 'firebase/auth';
 import { 
   getFirestore, collection, doc, setDoc, 
-  getDoc, onSnapshot, query, orderBy, 
+  getDoc, getDocs, onSnapshot, query, orderBy, // <-- Agregado getDocs
   addDoc, serverTimestamp, runTransaction, 
   where, limit, updateDoc, deleteDoc, arrayUnion, arrayRemove
 } from 'firebase/firestore';
@@ -140,6 +140,9 @@ const WelcomeScreen = () => {
       const baseData = { uid: user.uid, email: user.email || null, createdAt: serverTimestamp() };
       const newCode = generateReferralCode(isRestaurantMode ? restaurantName : user.displayName);
 
+      // Guardar mapeo público del código SIEMPRE (para que sea buscable)
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', newCode), { uid: user.uid });
+
       if (isRestaurantMode) {
         await setDoc(userRef, {
           ...baseData,
@@ -172,7 +175,6 @@ const WelcomeScreen = () => {
           points: 0,
           myRestaurants: [] // Lista de IDs de restaurantes donde soy influencer
         });
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', newCode), { uid: user.uid });
       }
     }
   };
@@ -241,30 +243,38 @@ const InfluencerDashboard = ({ user, userData }) => {
 
   const handleJoinRestaurant = async () => {
     if(!joinCode) return;
-    // Buscar restaurante por código
-    const q = query(collection(db, 'artifacts', appId, 'users'), where('referralCode', '==', joinCode.toUpperCase()), where('role', '==', 'owner'));
-    const querySnapshot = await getDoc(doc(db, 'dummy', 'dummy')); // Placeholder, necesitamos getDocs en realidad
-    // Simulación de búsqueda manual por limitación de imports en este bloque único
-    // En prod usarías getDocs(q)
-    // Aquí usaremos una lógica simple de lectura de colección pública de códigos si existiera, 
-    // pero para no complicar, asumiremos que el usuario escribe el ID o un código válido.
-    // Vamos a hacer un truco: leer todos los owners y filtrar (ineficiente en prod, ok para demo)
+    const code = joinCode.toUpperCase();
     
-    // Mejor enfoque: Buscar en colección de usuarios directamente si sabemos el ID, pero no lo sabemos.
-    // Usaremos la coleccion pública 'codes' que creamos en el registro.
-    const codeRef = doc(db, 'artifacts', appId, 'public', 'data', 'codes', joinCode.toUpperCase());
+    // 1. Intentar búsqueda rápida por mapa público (Lo ideal)
+    const codeRef = doc(db, 'artifacts', appId, 'public', 'data', 'codes', code);
     const codeSnap = await getDoc(codeRef);
     
+    let restId = null;
+
     if(codeSnap.exists()) {
-      const restId = codeSnap.data().uid;
-      // Enviar solicitud
+      restId = codeSnap.data().uid;
+    } else {
+      // 2. Fallback: Buscar en colección users directamente (Para cuentas antiguas o mal registradas)
+      try {
+        const q = query(collection(db, 'artifacts', appId, 'users'), where('referralCode', '==', code), where('role', '==', 'owner'));
+        const querySnapshot = await getDocs(q);
+        if (!querySnapshot.empty) {
+          restId = querySnapshot.docs[0].id;
+        }
+      } catch (e) {
+        console.error("Error buscando restaurante:", e);
+      }
+    }
+    
+    if(restId) {
+      // Enviar solicitud al ID encontrado
       await updateDoc(doc(db, 'artifacts', appId, 'users', restId), {
         pendingInfluencers: arrayUnion({ uid: user.uid, name: userData.displayName, email: userData.email })
       });
       alert("¡Solicitud enviada! Espera a que el restaurante te apruebe.");
       setJoinCode('');
     } else {
-      alert("Código de restaurante no válido.");
+      alert("Código de restaurante no válido o no encontrado.");
     }
   };
 
