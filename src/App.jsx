@@ -5,7 +5,7 @@ import {
   History, LogOut, Lock, Key, Store, 
   TrendingUp, Users, Plus, Trash2, LayoutDashboard,
   Instagram, Facebook, Video, Map, Globe, Link as LinkIcon,
-  XCircle, Check, Search, AlertCircle
+  XCircle, Check, Search, AlertCircle, Edit, Save, List
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -15,7 +15,7 @@ import {
 } from 'firebase/auth';
 import { 
   getFirestore, collection, doc, setDoc, 
-  getDoc, getDocs, onSnapshot, query, orderBy, // <-- Agregado getDocs
+  getDoc, getDocs, onSnapshot, query, orderBy, 
   addDoc, serverTimestamp, runTransaction, 
   where, limit, updateDoc, deleteDoc, arrayUnion, arrayRemove
 } from 'firebase/firestore';
@@ -286,6 +286,7 @@ const InfluencerDashboard = ({ user, userData }) => {
       restaurantId: selectedPromo.restaurantId,
       restaurantName: selectedPromo.restaurantName,
       promoTitle: selectedPromo.title,
+      promoId: selectedPromo.id, // Guardamos ID para agrupar estadísticas
       reward: selectedPromo.reward,
       platform: selectedPromo.platform || 'other',
       proof: proofLink,
@@ -391,7 +392,11 @@ const RestaurantPanel = ({ user, userData }) => {
   // Data
   const [pendingReviews, setPendingReviews] = useState([]);
   const [myPromos, setMyPromos] = useState([]);
-  const [newPromo, setNewPromo] = useState({ title: '', reward: '', platform: 'instagram' });
+  const [allTasks, setAllTasks] = useState([]); // Para estadísticas
+  
+  // State for Create/Edit Promo
+  const [promoForm, setPromoForm] = useState({ id: null, title: '', reward: '', platform: 'instagram' });
+  const [isEditing, setIsEditing] = useState(false);
   
   // Terminal
   const [billAmount, setBillAmount] = useState('');
@@ -399,21 +404,24 @@ const RestaurantPanel = ({ user, userData }) => {
   const [terminalMsg, setTerminalMsg] = useState(null);
 
   useEffect(() => {
-    // 1. Cargar Tareas Pendientes (Social Proof)
-    const qTasks = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid), where('status', '==', 'pending_review'));
-    const unsubTasks = onSnapshot(qTasks, (snap) => setPendingReviews(snap.docs.map(d => ({id:d.id, ...d.data()}))));
+    // 1. Cargar Tareas Pendientes (Review)
+    const qPending = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid), where('status', '==', 'pending_review'));
+    const unsubPending = onSnapshot(qPending, (snap) => setPendingReviews(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    // 2. Cargar Promos
+    // 2. Cargar TODAS las tareas para estadísticas
+    const qAll = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid));
+    const unsubAll = onSnapshot(qAll, (snap) => setAllTasks(snap.docs.map(d => ({id:d.id, ...d.data()}))));
+
+    // 3. Cargar Promos
     const qPromos = query(collection(db, 'artifacts', appId, 'promotions'), where('restaurantId', '==', user.uid));
     const unsubPromos = onSnapshot(qPromos, (snap) => setMyPromos(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    return () => { unsubTasks(); unsubPromos(); };
+    return () => { unsubPending(); unsubAll(); unsubPromos(); };
   }, [user]);
 
   // --- ACTIONS ---
 
   const handleApproveReview = async (task) => {
-    // Transacción: Marcar tarea completa y dar puntos al influencer
     try {
       await runTransaction(db, async (t) => {
         const taskRef = doc(db, 'artifacts', appId, 'tasks', task.id);
@@ -438,36 +446,58 @@ const RestaurantPanel = ({ user, userData }) => {
   const handleAcceptInfluencer = async (influencer) => {
     const userRef = doc(db, 'artifacts', appId, 'users', user.uid);
     const infRef = doc(db, 'artifacts', appId, 'users', influencer.uid);
-    
-    // Mover de pending a approved en Restaurante
-    await updateDoc(userRef, {
-      pendingInfluencers: arrayRemove(influencer),
-      approvedInfluencers: arrayUnion(influencer)
-    });
-
-    // Agregar restaurante a la lista del Influencer
-    await updateDoc(infRef, {
-      myRestaurants: arrayUnion(user.uid)
-    });
+    await updateDoc(userRef, { pendingInfluencers: arrayRemove(influencer), approvedInfluencers: arrayUnion(influencer) });
+    await updateDoc(infRef, { myRestaurants: arrayUnion(user.uid) });
     alert(`${influencer.name} ahora es parte del equipo.`);
   };
 
-  const createPromo = async () => {
-    if(!newPromo.title || !newPromo.reward) return;
-    await addDoc(collection(db, 'artifacts', appId, 'promotions'), {
-      restaurantId: user.uid,
-      restaurantName: userData.displayName,
-      ...newPromo,
-      reward: parseInt(newPromo.reward),
-      active: true,
-      createdAt: serverTimestamp()
-    });
-    setNewPromo({ title: '', reward: '', platform: 'instagram' });
-    alert("Misión creada.");
+  const handleSavePromo = async () => {
+    if(!promoForm.title || !promoForm.reward) return;
+    
+    if (promoForm.id) {
+      // EDITAR
+      await updateDoc(doc(db, 'artifacts', appId, 'promotions', promoForm.id), {
+        title: promoForm.title,
+        reward: parseInt(promoForm.reward),
+        platform: promoForm.platform
+      });
+      alert("Misión actualizada.");
+    } else {
+      // CREAR
+      await addDoc(collection(db, 'artifacts', appId, 'promotions'), {
+        restaurantId: user.uid,
+        restaurantName: userData.displayName,
+        title: promoForm.title,
+        reward: parseInt(promoForm.reward),
+        platform: promoForm.platform,
+        active: true,
+        createdAt: serverTimestamp()
+      });
+      alert("Misión creada.");
+    }
+    setPromoForm({ id: null, title: '', reward: '', platform: 'instagram' });
+    setIsEditing(false);
+  };
+
+  const handleDeletePromo = async (id) => {
+    if(confirm("¿Seguro que quieres eliminar esta misión? Los historiales se mantendrán, pero nadie nuevo podrá hacerla.")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'promotions', id));
+    }
+  };
+
+  const startEditPromo = (promo) => {
+    setPromoForm({ id: promo.id, title: promo.title, reward: promo.reward, platform: promo.platform });
+    setIsEditing(true);
+    // Scroll to form (simple logic)
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const getMissionStats = (promoId) => {
+    const completed = allTasks.filter(t => t.promoId === promoId && t.status === 'approved').length;
+    return completed;
   };
 
   const processSale = async () => {
-      // Lógica de terminal simplificada (copiada de v2, resumida)
       if (!billAmount || !customerCode) return;
       try {
         const codeSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', customerCode.toUpperCase()));
@@ -494,6 +524,16 @@ const RestaurantPanel = ({ user, userData }) => {
     alert(`Código de invitación copiado: ${userData.referralCode}`);
   };
 
+  const getPlatformIcon = (platform) => {
+    switch(platform) {
+      case 'instagram': return <Instagram size={18} className="text-pink-500"/>;
+      case 'facebook': return <Facebook size={18} className="text-blue-600"/>;
+      case 'tiktok': return <Video size={18} className="text-black"/>;
+      case 'google': return <Map size={18} className="text-red-500"/>;
+      default: return <Globe size={18} className="text-gray-500"/>;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-900 text-white font-sans flex flex-col md:flex-row">
       {/* Sidebar */}
@@ -502,7 +542,7 @@ const RestaurantPanel = ({ user, userData }) => {
         <nav className="space-y-2 flex-1">
           <NavItem icon={LayoutDashboard} label="Terminal" active={activeTab==='terminal'} onClick={()=>setActiveTab('terminal')}/>
           <NavItem icon={Users} label="Influencers" active={activeTab==='influencers'} onClick={()=>setActiveTab('influencers')} badge={userData.pendingInfluencers?.length}/>
-          <NavItem icon={Globe} label="Social & Reseñas" active={activeTab==='social'} onClick={()=>setActiveTab('social')} badge={pendingReviews.length}/>
+          <NavItem icon={Globe} label="Misiones & Reseñas" active={activeTab==='social'} onClick={()=>setActiveTab('social')} badge={pendingReviews.length}/>
           <NavItem icon={TrendingUp} label="Métricas" active={activeTab==='metrics'} onClick={()=>setActiveTab('metrics')}/>
         </nav>
         <div className="mt-8 pt-6 border-t border-slate-800">
@@ -514,7 +554,7 @@ const RestaurantPanel = ({ user, userData }) => {
       {/* Main Content */}
       <div className="flex-1 p-8 overflow-y-auto">
         
-        {/* TAB: INFLUENCERS (TEAM) */}
+        {/* TAB: INFLUENCERS */}
         {activeTab === 'influencers' && (
           <div className="max-w-4xl mx-auto animate-fade-in">
              <div className="flex justify-between items-center mb-8">
@@ -529,13 +569,8 @@ const RestaurantPanel = ({ user, userData }) => {
                  <div className="grid gap-4">
                    {userData.pendingInfluencers.map((inf, i) => (
                      <div key={i} className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex justify-between items-center">
-                       <div>
-                         <p className="font-bold">{inf.name}</p>
-                         <p className="text-xs text-slate-400">{inf.email}</p>
-                       </div>
-                       <div className="flex gap-2">
-                         <Button size="sm" variant="success" onClick={()=>handleAcceptInfluencer(inf)} icon={Check}>Aceptar</Button>
-                       </div>
+                       <div><p className="font-bold">{inf.name}</p><p className="text-xs text-slate-400">{inf.email}</p></div>
+                       <div className="flex gap-2"><Button size="sm" variant="success" onClick={()=>handleAcceptInfluencer(inf)} icon={Check}>Aceptar</Button></div>
                      </div>
                    ))}
                  </div>
@@ -562,57 +597,121 @@ const RestaurantPanel = ({ user, userData }) => {
           </div>
         )}
 
-        {/* TAB: SOCIAL MONITOR (REVIEWS) */}
+        {/* TAB: SOCIAL & MISSIONS */}
         {activeTab === 'social' && (
-          <div className="max-w-4xl mx-auto animate-fade-in">
-             <div className="flex justify-between items-center mb-6">
-                <h3 className="text-2xl font-bold">Monitor de Redes</h3>
-                <Button size="sm" onClick={()=>setActiveTab('promos_create')}>+ Crear Misión</Button>
-             </div>
-
-             {/* Create Promo Mini-Section */}
-             {activeTab === 'promos_create' && ( /* Logic handled via state for simplicity in this view */ null )}
-             <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 mb-8">
-               <h4 className="font-bold text-orange-400 mb-4">Crear Nueva Misión</h4>
-               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                 <input type="text" value={newPromo.title} onChange={e=>setNewPromo({...newPromo, title:e.target.value})} placeholder="Título (Ej. Selfie con Plato)" className="md:col-span-2 bg-slate-900 border border-slate-600 rounded-xl px-4 py-2 text-white outline-none"/>
-                 <select value={newPromo.platform} onChange={e=>setNewPromo({...newPromo, platform:e.target.value})} className="bg-slate-900 border border-slate-600 rounded-xl px-4 py-2 text-white outline-none">
-                   <option value="instagram">Instagram</option>
-                   <option value="google">Google Maps</option>
-                   <option value="tiktok">TikTok</option>
-                   <option value="facebook">Facebook</option>
-                 </select>
+          <div className="max-w-5xl mx-auto animate-fade-in space-y-12">
+             
+             {/* SECTION 1: CREATE / EDIT MISSION */}
+             <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+               <h4 className="font-bold text-orange-400 mb-4 flex items-center gap-2">
+                 {isEditing ? <Edit size={20}/> : <Plus size={20}/>} 
+                 {isEditing ? "Editar Misión" : "Crear Nueva Misión"}
+               </h4>
+               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                 <div className="md:col-span-2">
+                   <label className="text-xs text-slate-400 mb-1 block">Título de la Misión</label>
+                   <input type="text" value={promoForm.title} onChange={e=>setPromoForm({...promoForm, title:e.target.value})} placeholder="Ej. Selfie con Plato" className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2 text-white outline-none focus:border-orange-500"/>
+                 </div>
+                 <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Plataforma</label>
+                    <select value={promoForm.platform} onChange={e=>setPromoForm({...promoForm, platform:e.target.value})} className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2 text-white outline-none focus:border-orange-500">
+                      <option value="instagram">Instagram</option>
+                      <option value="google">Google Maps</option>
+                      <option value="tiktok">TikTok</option>
+                      <option value="facebook">Facebook</option>
+                    </select>
+                 </div>
                  <div className="flex gap-2">
-                   <input type="number" value={newPromo.reward} onChange={e=>setNewPromo({...newPromo, reward:e.target.value})} placeholder="Pts" className="w-20 bg-slate-900 border border-slate-600 rounded-xl px-4 py-2 text-white outline-none"/>
-                   <Button onClick={createPromo} size="sm">Crear</Button>
+                   <div className="flex-1">
+                      <label className="text-xs text-slate-400 mb-1 block">Puntos</label>
+                      <input type="number" value={promoForm.reward} onChange={e=>setPromoForm({...promoForm, reward:e.target.value})} placeholder="Pts" className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2 text-white outline-none focus:border-orange-500"/>
+                   </div>
+                   <div className="flex flex-col justify-end">
+                      <Button onClick={handleSavePromo} size="sm" icon={isEditing ? Save : Plus}>{isEditing ? "Guardar" : "Crear"}</Button>
+                   </div>
+                   {isEditing && (
+                     <div className="flex flex-col justify-end">
+                       <Button onClick={() => {setIsEditing(false); setPromoForm({id:null, title:'', reward:'', platform:'instagram'});}} size="sm" variant="ghost" className="text-slate-400">Cancelar</Button>
+                     </div>
+                   )}
                  </div>
                </div>
              </div>
 
-             <h4 className="font-bold text-slate-300 mb-4">Revisiones Pendientes</h4>
-             <div className="grid gap-4">
-               {pendingReviews.length === 0 ? (
-                 <p className="text-slate-500 text-center py-8 bg-slate-800 rounded-2xl border border-slate-700">No hay tareas pendientes de revisión.</p>
-               ) : (
-                 pendingReviews.map(task => (
-                   <div key={task.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg flex flex-col md:flex-row justify-between gap-4">
-                     <div>
-                       <div className="flex items-center gap-2 mb-2">
-                         <span className="text-sm font-bold text-white">{task.influencerName}</span>
-                         <span className="text-xs text-slate-400">• {new Date(task.createdAt?.seconds * 1000).toLocaleDateString()}</span>
+             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+               
+               {/* SECTION 2: MY MISSIONS LIST */}
+               <div>
+                 <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><List size={20}/> Mis Misiones Activas</h3>
+                 <div className="space-y-3">
+                   {myPromos.length === 0 ? (
+                     <p className="text-slate-500 italic">No tienes misiones configuradas.</p>
+                   ) : (
+                     myPromos.map(promo => (
+                       <div key={promo.id} className={`p-4 rounded-xl border flex justify-between items-center group transition-all ${promoForm.id === promo.id ? 'bg-orange-500/10 border-orange-500' : 'bg-slate-800 border-slate-700 hover:border-slate-500'}`}>
+                         <div className="flex items-center gap-3">
+                           <div className="bg-slate-900 p-2 rounded-lg text-slate-300">{getPlatformIcon(promo.platform)}</div>
+                           <div>
+                             <p className="font-semibold text-white">{promo.title}</p>
+                             <div className="flex items-center gap-2 text-xs text-slate-400">
+                               <span>{promo.reward} pts</span>
+                               <span className="text-slate-600">•</span>
+                               <span className="text-green-400">{getMissionStats(promo.id)} realizadas</span>
+                             </div>
+                           </div>
+                         </div>
+                         <div className="flex gap-1 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                           <button onClick={() => startEditPromo(promo)} className="p-2 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-lg"><Edit size={16}/></button>
+                           <button onClick={() => handleDeletePromo(promo.id)} className="p-2 text-slate-400 hover:text-red-400 bg-slate-700/50 hover:bg-slate-700 rounded-lg"><Trash2 size={16}/></button>
+                         </div>
                        </div>
-                       <p className="text-sm text-slate-300 mb-1">Misión: <span className="text-orange-400">{task.promoTitle}</span></p>
-                       <a href={task.proof} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-1">
-                         <LinkIcon size={12}/> Ver Evidencia ({task.platform})
-                       </a>
-                     </div>
-                     <div className="flex items-center gap-2">
-                       <Button size="sm" variant="danger" onClick={()=>handleRejectReview(task.id)} icon={XCircle}>Rechazar</Button>
-                       <Button size="sm" variant="success" onClick={()=>handleApproveReview(task)} icon={Check}>Aprobar ({task.reward} pts)</Button>
-                     </div>
-                   </div>
-                 ))
-               )}
+                     ))
+                   )}
+                 </div>
+               </div>
+
+               {/* SECTION 3: PENDING VALIDATIONS */}
+               <div>
+                  <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <CheckCircle size={20} className={pendingReviews.length > 0 ? "text-yellow-500" : "text-slate-500"}/> 
+                    Validaciones ({pendingReviews.length})
+                  </h3>
+                  
+                  <div className="space-y-4 h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                    {pendingReviews.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-700 rounded-xl">
+                        <CheckCircle size={40} className="mb-2 opacity-20"/>
+                        <p>¡Todo al día! No hay tareas por revisar.</p>
+                      </div>
+                    ) : (
+                      pendingReviews.map(task => (
+                        <div key={task.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg relative">
+                          <div className="absolute top-4 right-4 text-xs text-slate-500">{new Date(task.createdAt?.seconds * 1000).toLocaleDateString()}</div>
+                          
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 flex items-center justify-center font-bold text-white text-xs">
+                              {task.influencerName?.[0]}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-white">{task.influencerName}</p>
+                              <p className="text-xs text-slate-400">Completó: <span className="text-orange-400">{task.promoTitle}</span></p>
+                            </div>
+                          </div>
+
+                          <a href={task.proof} target="_blank" rel="noreferrer" className="block w-full bg-slate-900/50 hover:bg-slate-900 border border-slate-600 rounded-lg p-3 mb-4 text-xs text-blue-400 hover:underline transition-colors flex items-center gap-2">
+                            <LinkIcon size={14}/> {task.proof}
+                          </a>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <Button size="sm" variant="danger" onClick={()=>handleRejectReview(task.id)} className="justify-center" icon={XCircle}>Rechazar</Button>
+                            <Button size="sm" variant="success" onClick={()=>handleApproveReview(task)} className="justify-center" icon={Check}>Aprobar</Button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+               </div>
+
              </div>
           </div>
         )}
@@ -633,7 +732,7 @@ const RestaurantPanel = ({ user, userData }) => {
           </div>
         )}
         
-        {/* TAB: TERMINAL (Keep simple) */}
+        {/* TAB: TERMINAL */}
         {activeTab === 'terminal' && (
            <div className="max-w-md mx-auto mt-10 bg-slate-800 p-8 rounded-3xl border border-slate-700">
               <h3 className="text-xl font-bold mb-6">Terminal de Caja</h3>
