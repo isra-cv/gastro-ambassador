@@ -36,6 +36,11 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v5-metrics';
 
+// ------------------------------------------------------------------
+// CONFIGURACIÓN DE MARCA
+// ------------------------------------------------------------------
+// (Logo eliminado a petición del usuario)
+
 // Inicialización
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -143,11 +148,29 @@ const WelcomeScreen = () => {
       const result = await signInWithPopup(auth, googleProvider);
       await checkUserRecord(result.user);
     } catch (err) {
-      console.error(err);
+      console.error("Google Auth Error:", err);
+      // Fallback a anónimo si falla Google
       try {
         const result = await signInAnonymously(auth);
         await checkUserRecord(result.user);
-      } catch (anonErr) { setError("Error de autenticación."); }
+      } catch (anonErr) { 
+        console.error("Anonymous Auth Error:", anonErr);
+        
+        // Manejo de errores detallado para ayudarte a depurar
+        let msg = "Error de autenticación.";
+        
+        if (err.code === 'auth/unauthorized-domain') {
+          msg = "⚠️ Dominio no autorizado. Ve a Firebase Console > Authentication > Settings > Dominios autorizados y agrega este dominio.";
+        } else if (err.code === 'auth/api-key-not-valid') {
+          msg = "⚠️ API Key inválida. Verifica que hayas copiado correctamente tu 'firebaseConfig' en el código.";
+        } else if (err.code === 'auth/operation-not-allowed' || anonErr.code === 'auth/operation-not-allowed') {
+          msg = "⚠️ Proveedor deshabilitado. Habilita 'Google' y 'Anónimo' en Firebase Console > Authentication > Sign-in method.";
+        } else if (err.message) {
+          msg = `Error: ${err.message}`;
+        }
+        
+        setError(msg); 
+      }
     } finally { setLoading(false); }
   };
 
