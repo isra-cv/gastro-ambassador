@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   User, QrCode, DollarSign, Star, Share2, 
   Wallet, Camera, MapPin, CheckCircle, 
@@ -6,7 +6,8 @@ import {
   TrendingUp, Users, Plus, Trash2, LayoutDashboard,
   Instagram, Facebook, Video, Map, Globe, Link as LinkIcon,
   XCircle, Check, Search, AlertCircle, Edit, Save, List,
-  Home, Coffee, Download, Calendar, Phone, MessageCircle, ExternalLink
+  Home, Coffee, Download, Calendar, Phone, MessageCircle, ExternalLink,
+  ChevronRight, BarChart3, Filter
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -33,7 +34,14 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   appId: "1:849590508706:web:a1ff8dacf09b0c3760cbfb"
 };
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v4.1-airbnb';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v5-metrics';
+
+// ------------------------------------------------------------------
+// CONFIGURACIÓN DE MARCA (LOGO MIMOS Y BESITOS)
+// ------------------------------------------------------------------
+// REEMPLAZA ESTA URL CON LA URL PÚBLICA DE TU LOGO (Subido a Firebase Storage o cualquier hosting)
+// Para que el QR salga bonito, usa un PNG con fondo transparente o blanco.
+const LOGO_URL = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"; 
 
 // Inicialización
 const app = initializeApp(firebaseConfig);
@@ -57,6 +65,11 @@ const formatDate = (timestamp) => {
   return new Date(timestamp.seconds * 1000).toLocaleString('es-MX', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
+};
+
+const getMonthName = (monthIndex) => {
+    const months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    return months[monthIndex];
 };
 
 // --- COMPONENTES UI ---
@@ -101,7 +114,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-scale-up max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up max-h-[90vh] overflow-y-auto">
         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 sticky top-0 z-10">
           <h3 className="font-bold text-gray-800">{title}</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-200 rounded-full"><XCircle size={20} className="text-gray-400"/></button>
@@ -223,7 +236,6 @@ const WelcomeScreen = () => {
 
 // 2. INFLUENCER DASHBOARD
 const InfluencerDashboard = ({ user, userData }) => {
-  const [activeTab, setActiveTab] = useState('missions');
   const [promotions, setPromotions] = useState([]);
   const [selectedPromo, setSelectedPromo] = useState(null);
   const [proofLink, setProofLink] = useState('');
@@ -323,7 +335,6 @@ const InfluencerDashboard = ({ user, userData }) => {
 const RestaurantPanel = ({ user, userData }) => {
   const [activeTab, setActiveTab] = useState('terminal'); 
   const [pendingReviews, setPendingReviews] = useState([]);
-  const [myPromos, setMyPromos] = useState([]);
   const [partners, setPartners] = useState([]);
   const [partnerLog, setPartnerLog] = useState([]);
   const [viewingQR, setViewingQR] = useState(null); 
@@ -338,38 +349,71 @@ const RestaurantPanel = ({ user, userData }) => {
   const [newPartnerPhone, setNewPartnerPhone] = useState('');
   const [newPartnerLink, setNewPartnerLink] = useState('');
   const [newPartnerImg, setNewPartnerImg] = useState('');
+
+  // Partner Details & Search
+  const [partnerSearchTerm, setPartnerSearchTerm] = useState('');
+  const [selectedPartner, setSelectedPartner] = useState(null); // Para ver detalles
+  const [selectedPartnerStats, setSelectedPartnerStats] = useState(null);
   
   // Terminal
   const [billAmount, setBillAmount] = useState('');
   const [customerCode, setCustomerCode] = useState('');
   const [terminalMsg, setTerminalMsg] = useState(null);
-  const [identifiedPartner, setIdentifiedPartner] = useState(null); // INFO DEL HOST AL ESCANEAR
+  const [identifiedPartner, setIdentifiedPartner] = useState(null); 
 
   useEffect(() => {
     // Listeners
     const qPending = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid), where('status', '==', 'pending_review'));
     const unsubPending = onSnapshot(qPending, (snap) => setPendingReviews(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    const qPromos = query(collection(db, 'artifacts', appId, 'promotions'), where('restaurantId', '==', user.uid));
-    const unsubPromos = onSnapshot(qPromos, (snap) => setMyPromos(snap.docs.map(d => ({id:d.id, ...d.data()}))));
-
     // Partners (Airbnb hosts)
     const qPartners = query(collection(db, 'artifacts', appId, 'users'), where('createdBy', '==', user.uid), where('role', '==', 'partner'));
     const unsubPartners = onSnapshot(qPartners, (snap) => setPartners(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    return () => { unsubPending(); unsubPromos(); unsubPartners(); };
+    // Fetch History Log (Bitácora completa)
+    const qHist = query(collection(db, 'artifacts', appId, 'users', user.uid, 'history'), orderBy('createdAt', 'desc'));
+    const unsubHist = onSnapshot(qHist, (snap) => {
+        const logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
+        setPartnerLog(logs);
+    });
+
+    return () => { unsubPending(); unsubPartners(); unsubHist(); };
   }, [user]);
 
-  useEffect(() => {
-    if(activeTab === 'partners') {
-        const qHist = query(collection(db, 'artifacts', appId, 'users', user.uid, 'history'), orderBy('createdAt', 'desc'), limit(100));
-        const unsubHist = onSnapshot(qHist, (snap) => {
-            const logs = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(item => item.isPartnerSale);
-            setPartnerLog(logs);
-        });
-        return () => unsubHist();
-    }
-  }, [activeTab, user]);
+  // --- DERIVED DATA / STATS ---
+  const getPartnerStats = (partnerCode) => {
+      // Filtrar logs de este partner
+      const logs = partnerLog.filter(l => l.beneficiaryCode === partnerCode);
+      const totalVisits = logs.length;
+      
+      const currentMonth = new Date().getMonth();
+      const currentYear = new Date().getFullYear();
+
+      const currentMonthLogs = logs.filter(l => {
+          if(!l.createdAt) return false;
+          const d = new Date(l.createdAt.seconds * 1000);
+          return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      });
+
+      const monthCommission = currentMonthLogs.reduce((acc, curr) => acc + (curr.commission || 0), 0);
+      return { totalVisits, monthCommission };
+  };
+
+  const getMonthlyBreakdown = (partnerCode) => {
+    const logs = partnerLog.filter(l => l.beneficiaryCode === partnerCode);
+    const breakdown = {};
+    
+    logs.forEach(log => {
+        if(!log.createdAt) return;
+        const d = new Date(log.createdAt.seconds * 1000);
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        if(!breakdown[key]) breakdown[key] = { month: d.getMonth(), year: d.getFullYear(), amount: 0, visits: 0 };
+        breakdown[key].amount += (log.commission || 0);
+        breakdown[key].visits += 1;
+    });
+    
+    return Object.values(breakdown).sort((a,b) => b.year - a.year || b.month - a.month);
+  };
 
   // --- ACTIONS ---
 
@@ -388,14 +432,6 @@ const RestaurantPanel = ({ user, userData }) => {
 
   const handleRejectReview = async (id) => {
     if(confirm("¿Rechazar?")) await updateDoc(doc(db, 'artifacts', appId, 'tasks', id), { status: 'rejected' });
-  };
-
-  const handleSavePromo = async () => {
-    if(!promoForm.title || !promoForm.reward) return;
-    const data = { title: promoForm.title, reward: parseInt(promoForm.reward), platform: promoForm.platform };
-    if (promoForm.id) { await updateDoc(doc(db, 'artifacts', appId, 'promotions', promoForm.id), data); } 
-    else { await addDoc(collection(db, 'artifacts', appId, 'promotions'), { restaurantId: user.uid, restaurantName: userData.displayName, ...data, active: true, createdAt: serverTimestamp() }); }
-    setPromoForm({ id: null, title: '', reward: '', platform: 'instagram' }); setIsEditing(false);
   };
 
   const createPartner = async () => {
@@ -498,6 +534,17 @@ const RestaurantPanel = ({ user, userData }) => {
      window.open(`https://wa.me/${clean}`, '_blank');
   };
 
+  const openPartnerDetails = (partner) => {
+      setSelectedPartner(partner);
+      setSelectedPartnerStats(getMonthlyBreakdown(partner.referralCode));
+  };
+
+  // Filter partners by search
+  const filteredPartners = partners.filter(p => 
+      p.displayName.toLowerCase().includes(partnerSearchTerm.toLowerCase()) || 
+      p.referralCode.includes(partnerSearchTerm.toUpperCase())
+  );
+
   return (
     <div className="min-h-screen bg-slate-900 text-white font-sans flex flex-col md:flex-row">
       <div className="md:w-64 bg-slate-950 p-6 flex flex-col border-r border-slate-800">
@@ -584,83 +631,77 @@ const RestaurantPanel = ({ user, userData }) => {
 
         {/* TAB: PARTNERS (AIRBNB) */}
         {activeTab === 'partners' && (
-          <div className="max-w-5xl mx-auto animate-fade-in">
-             <div className="flex justify-between items-center mb-8">
+          <div className="max-w-6xl mx-auto animate-fade-in">
+             <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
                <div>
                  <h3 className="text-2xl font-bold flex items-center gap-2"><Home className="text-pink-500"/> Alianzas Airbnb</h3>
                  <p className="text-slate-400 text-sm">Gestiona hosts y comisiones del 3%.</p>
                </div>
-               <Button onClick={()=>setShowNewPartner(true)} icon={Plus} className="bg-pink-600 hover:bg-pink-700 border-none">Nuevo Host</Button>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-               {partners.map(p => (
-                 <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group hover:border-pink-500/50 transition-colors">
-                   <div className="absolute top-0 right-0 p-2 opacity-10"><Home size={60}/></div>
-                   <div className="flex items-center gap-3 mb-3">
-                      <div className="w-12 h-12 bg-slate-700 rounded-lg overflow-hidden">
-                        {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-500"><Home size={16}/></div>}
-                      </div>
-                      <div className="overflow-hidden">
-                         <h4 className="font-bold text-lg truncate">{p.displayName}</h4>
-                         <a href={p.airbnbUrl} target="_blank" rel="noreferrer" className="text-xs text-pink-400 hover:underline flex items-center gap-1"><ExternalLink size={10}/> Ver Listing</a>
-                      </div>
-                   </div>
-                   
-                   <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-600 inline-block mb-4 w-full text-center">
-                     <p className="font-mono text-xl tracking-widest text-pink-400 font-bold">{p.referralCode}</p>
-                   </div>
-                   <div className="flex justify-between items-end">
-                     <div>
-                       <p className="text-xs text-slate-500">Saldo Pendiente</p>
-                       <p className="text-xl font-bold">{formatCurrency(p.balance || 0)}</p>
-                     </div>
-                     <button onClick={() => downloadQR(p.referralCode)} className="p-2 bg-white text-slate-900 rounded-lg hover:scale-105 transition-transform"><QrCode size={20}/></button>
-                   </div>
+               <div className="flex gap-2 w-full md:w-auto">
+                 <div className="relative flex-1 md:w-64">
+                    <Search className="absolute left-3 top-3 text-slate-500" size={18}/>
+                    <input 
+                      type="text" 
+                      value={partnerSearchTerm}
+                      onChange={(e) => setPartnerSearchTerm(e.target.value)}
+                      placeholder="Buscar por código..." 
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-pink-500 outline-none uppercase"
+                    />
                  </div>
-               ))}
-               {partners.length === 0 && <div className="col-span-3 text-center py-10 text-slate-500 bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-700">No hay hosts registrados aún.</div>}
+                 <Button onClick={()=>setShowNewPartner(true)} icon={Plus} className="bg-pink-600 hover:bg-pink-700 border-none shrink-0">Nuevo Host</Button>
+               </div>
              </div>
 
-             {/* BITACORA TABLE */}
-             <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
-               <div className="p-5 border-b border-slate-700 flex justify-between items-center">
-                 <h4 className="font-bold flex items-center gap-2"><Calendar size={18}/> Bitácora de Comisiones (Airbnb)</h4>
-                 <Button size="sm" variant="ghost" icon={Download} className="text-slate-400">Exportar CSV</Button>
-               </div>
-               <div className="overflow-x-auto">
-                 <table className="w-full text-sm text-left">
-                   <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
-                     <tr>
-                       <th className="px-6 py-4">Fecha</th>
-                       <th className="px-6 py-4">Código Host</th>
-                       <th className="px-6 py-4">Nombre</th>
-                       <th className="px-6 py-4 text-right">Total Cuenta</th>
-                       <th className="px-6 py-4 text-right">Comisión (3%)</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-slate-700">
-                     {partnerLog.length === 0 ? (
-                       <tr><td colSpan="5" className="px-6 py-8 text-center text-slate-500">Sin movimientos registrados.</td></tr>
-                     ) : (
-                       partnerLog.map(log => (
-                         <tr key={log.id} className="hover:bg-slate-700/30">
-                           <td className="px-6 py-4 font-mono text-slate-300">{formatDate(log.createdAt)}</td>
-                           <td className="px-6 py-4"><span className="bg-pink-500/20 text-pink-300 px-2 py-1 rounded text-xs font-bold">{log.beneficiaryCode}</span></td>
-                           <td className="px-6 py-4 text-white">{log.beneficiaryName}</td>
-                           <td className="px-6 py-4 text-right font-mono text-slate-300">{formatCurrency(log.amount)}</td>
-                           <td className="px-6 py-4 text-right font-mono font-bold text-green-400">{formatCurrency(log.commission)}</td>
-                         </tr>
-                       ))
-                     )}
-                   </tbody>
-                 </table>
-               </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+               {filteredPartners.map(p => {
+                 const stats = getPartnerStats(p.referralCode);
+                 return (
+                   <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group hover:border-pink-500/50 transition-colors cursor-pointer" onClick={() => openPartnerDetails(p)}>
+                     <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><Home size={80}/></div>
+                     
+                     {/* Header Card */}
+                     <div className="flex items-start gap-3 mb-4 relative z-10">
+                        <div className="w-14 h-14 bg-slate-700 rounded-xl overflow-hidden shrink-0 border border-slate-600">
+                          {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-500"><Home size={20}/></div>}
+                        </div>
+                        <div className="overflow-hidden">
+                           <h4 className="font-bold text-lg truncate text-white group-hover:text-pink-400 transition-colors">{p.displayName}</h4>
+                           <div className="flex items-center gap-2 mt-1">
+                             <span className="text-xs bg-slate-900 px-2 py-0.5 rounded text-slate-400 font-mono border border-slate-700">{p.referralCode}</span>
+                           </div>
+                        </div>
+                     </div>
+                     
+                     {/* Stats Grid */}
+                     <div className="grid grid-cols-2 gap-2 mb-4 relative z-10">
+                        <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                            <p className="text-[10px] text-slate-500 uppercase">Visitas Total</p>
+                            <p className="text-lg font-bold text-white">{stats.totalVisits}</p>
+                        </div>
+                        <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                            <p className="text-[10px] text-slate-500 uppercase">Comisión Mes</p>
+                            <p className="text-lg font-bold text-green-400">{formatCurrency(stats.monthCommission)}</p>
+                        </div>
+                     </div>
+
+                     {/* Actions */}
+                     <div className="flex justify-between items-center relative z-10 border-t border-slate-700/50 pt-3">
+                       <span className="text-xs text-slate-500 flex items-center gap-1">Ver Historial <ChevronRight size={12}/></span>
+                       <button 
+                         onClick={(e) => { e.stopPropagation(); downloadQR(p.referralCode); }} 
+                         className="p-2 bg-pink-600 text-white rounded-lg hover:bg-pink-500 transition-colors shadow-lg shadow-pink-900/20"
+                         title="Ver QR"
+                        >
+                         <QrCode size={18}/>
+                       </button>
+                     </div>
+                   </div>
+                 );
+               })}
+               {filteredPartners.length === 0 && <div className="col-span-3 text-center py-10 text-slate-500 bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-700">No se encontraron hosts.</div>}
              </div>
 
              <Modal isOpen={showNewPartner} onClose={()=>setShowNewPartner(false)} title="Registrar Host Airbnb">
-               <p className="text-sm text-gray-500 mb-4">Se generará un código único con 3% de comisión fija.</p>
-               
                <div className="space-y-3">
                  <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">Nombre del Host / Propiedad</label>
@@ -679,43 +720,87 @@ const RestaurantPanel = ({ user, userData }) => {
                     <input type="url" value={newPartnerImg} onChange={e=>setNewPartnerImg(e.target.value)} placeholder="https://..." className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
                  </div>
                </div>
-
                <Button onClick={createPartner} className="w-full mt-6">Generar Código</Button>
              </Modal>
 
-             {/* MODAL QR REAL */}
-             <Modal isOpen={!!viewingQR} onClose={() => setViewingQR(null)} title="Código QR para Imprimir">
+             {/* MODAL DETALLES DEL PARTNER */}
+             <Modal isOpen={!!selectedPartner} onClose={() => setSelectedPartner(null)} title="Detalle del Host">
+                {selectedPartner && (
+                    <div className="space-y-6">
+                        {/* Profile Header */}
+                        <div className="flex items-center gap-4 border-b border-gray-100 pb-4">
+                             <div className="w-16 h-16 bg-gray-100 rounded-full overflow-hidden shrink-0 border border-gray-200">
+                                 {selectedPartner.photoURL ? <img src={selectedPartner.photoURL} className="w-full h-full object-cover"/> : <Home className="w-8 h-8 m-4 text-gray-400"/>}
+                             </div>
+                             <div>
+                                 <h4 className="font-bold text-xl text-gray-800">{selectedPartner.displayName}</h4>
+                                 <p className="text-gray-500 text-sm font-mono">{selectedPartner.referralCode}</p>
+                                 <div className="flex gap-2 mt-2">
+                                     {selectedPartner.airbnbUrl && <a href={selectedPartner.airbnbUrl} target="_blank" className="text-xs text-pink-600 underline">Ver Airbnb</a>}
+                                     {selectedPartner.phoneNumber && <a href={`https://wa.me/${selectedPartner.phoneNumber.replace(/\D/g,'')}`} target="_blank" className="text-xs text-green-600 underline">WhatsApp</a>}
+                                 </div>
+                             </div>
+                        </div>
+
+                        {/* Breakdown Stats */}
+                        <div>
+                            <h5 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><BarChart3 size={18}/> Comisiones por Mes</h5>
+                            <div className="max-h-60 overflow-y-auto pr-2 space-y-2">
+                                {selectedPartnerStats && selectedPartnerStats.length > 0 ? selectedPartnerStats.map((stat, idx) => (
+                                    <div key={idx} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                        <div>
+                                            <p className="font-bold text-gray-800">{getMonthName(stat.month)} {stat.year}</p>
+                                            <p className="text-xs text-gray-500">{stat.visits} visitas</p>
+                                        </div>
+                                        <p className="font-bold text-green-600">{formatCurrency(stat.amount)}</p>
+                                    </div>
+                                )) : <p className="text-center text-gray-400 text-sm">No hay registros de actividad aún.</p>}
+                            </div>
+                        </div>
+
+                        <Button onClick={() => setSelectedPartner(null)} variant="secondary" className="w-full">Cerrar</Button>
+                    </div>
+                )}
+             </Modal>
+
+             {/* MODAL QR REAL CON LOGO */}
+             <Modal isOpen={!!viewingQR} onClose={() => setViewingQR(null)} title="Código QR Oficial">
                 <div className="flex flex-col items-center justify-center p-4">
                     <p className="text-sm text-gray-500 mb-4 text-center">Escanea este código para asignar la venta a <span className="font-bold text-gray-800">{viewingQR}</span></p>
-                    <div className="bg-white p-4 rounded-xl border-2 border-slate-200 mb-6 shadow-inner">
+                    
+                    {/* QR Container */}
+                    <div className="bg-white p-4 rounded-xl border-2 border-slate-200 mb-6 shadow-inner relative">
+                        {/* Usamos QuickChart para generar el QR con la imagen incrustada */}
                         <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${viewingQR}&color=0f172a`} 
+                            src={`https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=400&ecLevel=H&margin=1&dark=000000&light=ffffff`} 
                             alt="QR Code" 
-                            className="w-48 h-48"
+                            className="w-64 h-64 object-contain"
                         />
                     </div>
-                    <div className="flex gap-2 w-full">
+                    
+                    <div className="w-full space-y-2">
                         <Button 
-                            variant="secondary" 
-                            className="flex-1"
+                            variant="primary" 
+                            className="w-full"
                             onClick={() => {
                                 const link = document.createElement('a');
-                                link.href = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${viewingQR}`;
+                                // URL de alta resolución para impresión
+                                link.href = `https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=1000&ecLevel=H&margin=2`;
                                 link.target = '_blank';
-                                link.download = `QR-${viewingQR}.png`; 
+                                link.download = `QR-${viewingQR}.png`; // Nota: download attr a veces es bloqueado por CORS, abrirá en nueva pestaña
                                 link.click();
                             }}
                         >
-                            Descargar Imagen
+                            <Download size={18} className="mr-2"/> Descargar para Imprimir (1:1)
                         </Button>
-                        <Button onClick={() => setViewingQR(null)} className="flex-1">Cerrar</Button>
+                        <Button onClick={() => setViewingQR(null)} variant="ghost" className="w-full">Cerrar</Button>
                     </div>
                 </div>
             </Modal>
           </div>
         )}
 
-        {/* OTHER TABS (Similares a versión anterior) */}
+        {/* OTHER TABS */}
         {activeTab === 'influencers' && (
            <div className="max-w-4xl mx-auto">
               <h3 className="text-2xl font-bold mb-6">Influencers (10%)</h3>
