@@ -33,7 +33,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   appId: "1:849590508706:web:a1ff8dacf09b0c3760cbfb"
 };
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v4';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v4-qr-fix';
 
 // Inicialización
 const app = initializeApp(firebaseConfig);
@@ -220,7 +220,7 @@ const WelcomeScreen = () => {
   );
 };
 
-// 2. INFLUENCER DASHBOARD (Código previo sin cambios mayores)
+// 2. INFLUENCER DASHBOARD
 const InfluencerDashboard = ({ user, userData }) => {
   const [activeTab, setActiveTab] = useState('missions');
   const [promotions, setPromotions] = useState([]);
@@ -249,7 +249,6 @@ const InfluencerDashboard = ({ user, userData }) => {
     let restId = null;
     if(codeSnap.exists()) { restId = codeSnap.data().uid; } 
     else {
-      // Fallback
       try {
         const q = query(collection(db, 'artifacts', appId, 'users'), where('referralCode', '==', code), where('role', '==', 'owner'));
         const querySnapshot = await getDocs(q);
@@ -324,9 +323,9 @@ const RestaurantPanel = ({ user, userData }) => {
   const [activeTab, setActiveTab] = useState('terminal'); 
   const [pendingReviews, setPendingReviews] = useState([]);
   const [myPromos, setMyPromos] = useState([]);
-  const [allTasks, setAllTasks] = useState([]);
   const [partners, setPartners] = useState([]);
   const [partnerLog, setPartnerLog] = useState([]);
+  const [viewingQR, setViewingQR] = useState(null); // NUEVO ESTADO PARA QR
   
   // Forms & Modals
   const [promoForm, setPromoForm] = useState({ id: null, title: '', reward: '', platform: 'instagram' });
@@ -344,25 +343,18 @@ const RestaurantPanel = ({ user, userData }) => {
     const qPending = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid), where('status', '==', 'pending_review'));
     const unsubPending = onSnapshot(qPending, (snap) => setPendingReviews(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    const qAll = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid));
-    const unsubAll = onSnapshot(qAll, (snap) => setAllTasks(snap.docs.map(d => ({id:d.id, ...d.data()}))));
-
     const qPromos = query(collection(db, 'artifacts', appId, 'promotions'), where('restaurantId', '==', user.uid));
     const unsubPromos = onSnapshot(qPromos, (snap) => setMyPromos(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    // Partners (Airbnb hosts) - Fetch those created by me
+    // Partners (Airbnb hosts)
     const qPartners = query(collection(db, 'artifacts', appId, 'users'), where('createdBy', '==', user.uid), where('role', '==', 'partner'));
     const unsubPartners = onSnapshot(qPartners, (snap) => setPartners(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    return () => { unsubPending(); unsubAll(); unsubPromos(); unsubPartners(); };
+    return () => { unsubPending(); unsubPromos(); unsubPartners(); };
   }, [user]);
 
-  // Fetch Partner Log (Bitácora) when partner tab is active
   useEffect(() => {
     if(activeTab === 'partners') {
-        // Fetch all history items where referrer is a partner
-        // This is a bit complex in NoSQL without heavy indexing.
-        // Simplified: Fetch all my history and filter in memory by partner codes
         const qHist = query(collection(db, 'artifacts', appId, 'users', user.uid, 'history'), orderBy('createdAt', 'desc'), limit(100));
         const unsubHist = onSnapshot(qHist, (snap) => {
             const logs = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(item => item.isPartnerSale);
@@ -391,14 +383,6 @@ const RestaurantPanel = ({ user, userData }) => {
     if(confirm("¿Rechazar?")) await updateDoc(doc(db, 'artifacts', appId, 'tasks', id), { status: 'rejected' });
   };
 
-  const handleAcceptInfluencer = async (influencer) => {
-    const userRef = doc(db, 'artifacts', appId, 'users', user.uid);
-    const infRef = doc(db, 'artifacts', appId, 'users', influencer.uid);
-    await updateDoc(userRef, { pendingInfluencers: arrayRemove(influencer), approvedInfluencers: arrayUnion(influencer) });
-    await updateDoc(infRef, { myRestaurants: arrayUnion(user.uid) });
-    alert("Aceptado.");
-  };
-
   const handleSavePromo = async () => {
     if(!promoForm.title || !promoForm.reward) return;
     const data = { title: promoForm.title, reward: parseInt(promoForm.reward), platform: promoForm.platform };
@@ -407,22 +391,15 @@ const RestaurantPanel = ({ user, userData }) => {
     setPromoForm({ id: null, title: '', reward: '', platform: 'instagram' }); setIsEditing(false);
   };
 
-  const handleDeletePromo = async (id) => {
-    if(confirm("¿Eliminar?")) await deleteDoc(doc(db, 'artifacts', appId, 'promotions', id));
-  };
-
   const startEditPromo = (promo) => {
     setPromoForm({ id: promo.id, title: promo.title, reward: promo.reward, platform: promo.platform }); setIsEditing(true); window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const createPartner = async () => {
     if (!newPartnerName) return;
-    const cleanName = newPartnerName.replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase();
-    // Generar ID único para el partner sin autenticación
     const partnerId = `PARTNER-${Date.now()}`;
     const code = generateReferralCode(newPartnerName, 'HOST-');
 
-    // Crear "Usuario" Host (Sin login real, solo para tracking)
     await setDoc(doc(db, 'artifacts', appId, 'users', partnerId), {
       uid: partnerId,
       displayName: newPartnerName,
@@ -434,11 +411,11 @@ const RestaurantPanel = ({ user, userData }) => {
       createdAt: serverTimestamp()
     });
 
-    // Registrar código público
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', code), { uid: partnerId });
-    
     setNewPartnerName(''); setShowNewPartner(false);
-    alert(`Host creado con éxito. Código: ${code}`);
+    
+    // Abrir QR automáticamente tras crear
+    setViewingQR(code);
   };
 
   const processSale = async () => {
@@ -449,7 +426,6 @@ const RestaurantPanel = ({ user, userData }) => {
         const refId = codeSnap.data().uid;
         const amount = parseFloat(billAmount);
 
-        // Fetch referrer data to check rate
         const refRef = doc(db, 'artifacts', appId, 'users', refId);
         
         await runTransaction(db, async (t) => {
@@ -457,18 +433,15 @@ const RestaurantPanel = ({ user, userData }) => {
            if (!infSnap.exists()) throw "Usuario no encontrado";
            
            const infData = infSnap.data();
-           const rate = infData.commissionRate || 0.10; // Default 10% influencer, or 3% partner
+           const rate = infData.commissionRate || 0.10; 
            const comm = amount * rate;
            const isPartner = infData.role === 'partner';
            
-           // Update Beneficiary Balance
            t.update(refRef, { balance: (infData.balance || 0) + comm });
            
-           // Update Restaurant Stats & Log
            const myRef = doc(db, 'artifacts', appId, 'users', user.uid);
            t.update(myRef, { 'stats.revenue': (userData.stats?.revenue || 0) + amount, 'stats.commissions': (userData.stats?.commissions || 0) + comm });
 
-           // Log in Restaurant History (Centralized log for easier bitácora)
            const logRef = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'history'));
            t.set(logRef, {
              type: 'sale',
@@ -477,20 +450,18 @@ const RestaurantPanel = ({ user, userData }) => {
              rate: rate,
              beneficiaryName: infData.displayName,
              beneficiaryCode: infData.referralCode,
-             isPartnerSale: isPartner, // Flag for easy filtering
+             isPartnerSale: isPartner, 
              createdAt: serverTimestamp()
            });
-
-           // Also log in User History if needed (skipped for brevity)
         });
         setTerminalMsg({type: 'success', text: `Venta registrada.`});
         setBillAmount(''); setCustomerCode('');
       } catch(e) { setTerminalMsg({type:'error', text: e.message}); }
   };
 
+  // --- NUEVA FUNCIÓN DE QR REAL ---
   const downloadQR = (code) => {
-      // Dummy function for demo - in real app would generate image blob
-      alert(`Imprime este código QR para ${code}. (Funcionalidad de imagen real requiere librería externa)`);
+    setViewingQR(code);
   };
 
   return (
@@ -605,14 +576,43 @@ const RestaurantPanel = ({ user, userData }) => {
                <input type="text" value={newPartnerName} onChange={e=>setNewPartnerName(e.target.value)} placeholder="Ej. Casa Azul Centro" className="w-full px-4 py-3 rounded-xl border border-gray-200 mb-6 text-gray-800"/>
                <Button onClick={createPartner} className="w-full">Generar Código</Button>
              </Modal>
+
+             {/* MODAL QR REAL */}
+             <Modal isOpen={!!viewingQR} onClose={() => setViewingQR(null)} title="Código QR para Imprimir">
+                <div className="flex flex-col items-center justify-center p-4">
+                    <p className="text-sm text-gray-500 mb-4 text-center">Escanea este código para asignar la venta a <span className="font-bold text-gray-800">{viewingQR}</span></p>
+                    <div className="bg-white p-4 rounded-xl border-2 border-slate-200 mb-6 shadow-inner">
+                        <img 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${viewingQR}&color=0f172a`} 
+                            alt="QR Code" 
+                            className="w-48 h-48"
+                        />
+                    </div>
+                    <div className="flex gap-2 w-full">
+                        <Button 
+                            variant="secondary" 
+                            className="flex-1"
+                            onClick={() => {
+                                const link = document.createElement('a');
+                                link.href = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${viewingQR}`;
+                                link.target = '_blank';
+                                link.download = `QR-${viewingQR}.png`; 
+                                link.click();
+                            }}
+                        >
+                            Descargar Imagen
+                        </Button>
+                        <Button onClick={() => setViewingQR(null)} className="flex-1">Cerrar</Button>
+                    </div>
+                </div>
+            </Modal>
           </div>
         )}
 
-        {/* OTHER TABS (Minified for brevity as they remain largely same logic) */}
+        {/* OTHER TABS (Similares a versión anterior) */}
         {activeTab === 'influencers' && (
            <div className="max-w-4xl mx-auto">
               <h3 className="text-2xl font-bold mb-6">Influencers (10%)</h3>
-              {/* Similar list view as v3 */}
               <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
                 {userData.approvedInfluencers?.map((inf,i)=>(
                    <div key={i} className="p-4 border-b border-slate-700 flex justify-between items-center">
@@ -635,7 +635,6 @@ const RestaurantPanel = ({ user, userData }) => {
                  <Button onClick={handleSavePromo} size="sm">{isEditing ? "Guardar" : "Crear"}</Button>
                </div>
              </div>
-             {/* Pending Reviews List */}
              <h4 className="font-bold text-slate-300 mb-4">Validaciones Pendientes</h4>
              <div className="grid gap-4">
                {pendingReviews.map(task => (
