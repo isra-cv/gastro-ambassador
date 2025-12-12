@@ -6,7 +6,7 @@ import {
   TrendingUp, Users, Plus, Trash2, LayoutDashboard,
   Instagram, Facebook, Video, Map, Globe, Link as LinkIcon,
   XCircle, Check, Search, AlertCircle, Edit, Save, List,
-  Home, Coffee, Download, Calendar
+  Home, Coffee, Download, Calendar, Phone, MessageCircle, ExternalLink
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -33,7 +33,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   appId: "1:849590508706:web:a1ff8dacf09b0c3760cbfb"
 };
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v4-qr-fix';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v4.1-airbnb';
 
 // Inicialización
 const app = initializeApp(firebaseConfig);
@@ -75,7 +75,8 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
     ghost: "bg-transparent text-gray-600 hover:bg-gray-100 shadow-none",
     dark: "bg-slate-800 text-white hover:bg-slate-700 shadow-slate-900",
     success: "bg-green-500 text-white hover:bg-green-600 shadow-green-200",
-    danger: "bg-red-500 text-white hover:bg-red-600 shadow-red-200"
+    danger: "bg-red-500 text-white hover:bg-red-600 shadow-red-200",
+    whatsapp: "bg-green-500 text-white hover:bg-green-600 border border-green-400"
   };
 
   return (
@@ -100,8 +101,8 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-scale-up">
-        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+      <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-scale-up max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 sticky top-0 z-10">
           <h3 className="font-bold text-gray-800">{title}</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-200 rounded-full"><XCircle size={20} className="text-gray-400"/></button>
         </div>
@@ -325,18 +326,24 @@ const RestaurantPanel = ({ user, userData }) => {
   const [myPromos, setMyPromos] = useState([]);
   const [partners, setPartners] = useState([]);
   const [partnerLog, setPartnerLog] = useState([]);
-  const [viewingQR, setViewingQR] = useState(null); // NUEVO ESTADO PARA QR
+  const [viewingQR, setViewingQR] = useState(null); 
   
   // Forms & Modals
   const [promoForm, setPromoForm] = useState({ id: null, title: '', reward: '', platform: 'instagram' });
   const [isEditing, setIsEditing] = useState(false);
+  
+  // Partner Create Form
   const [showNewPartner, setShowNewPartner] = useState(false);
   const [newPartnerName, setNewPartnerName] = useState('');
+  const [newPartnerPhone, setNewPartnerPhone] = useState('');
+  const [newPartnerLink, setNewPartnerLink] = useState('');
+  const [newPartnerImg, setNewPartnerImg] = useState('');
   
   // Terminal
   const [billAmount, setBillAmount] = useState('');
   const [customerCode, setCustomerCode] = useState('');
   const [terminalMsg, setTerminalMsg] = useState(null);
+  const [identifiedPartner, setIdentifiedPartner] = useState(null); // INFO DEL HOST AL ESCANEAR
 
   useEffect(() => {
     // Listeners
@@ -391,10 +398,6 @@ const RestaurantPanel = ({ user, userData }) => {
     setPromoForm({ id: null, title: '', reward: '', platform: 'instagram' }); setIsEditing(false);
   };
 
-  const startEditPromo = (promo) => {
-    setPromoForm({ id: promo.id, title: promo.title, reward: promo.reward, platform: promo.platform }); setIsEditing(true); window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
   const createPartner = async () => {
     if (!newPartnerName) return;
     const partnerId = `PARTNER-${Date.now()}`;
@@ -408,20 +411,48 @@ const RestaurantPanel = ({ user, userData }) => {
       commissionRate: 0.03, // 3% Commission
       balance: 0,
       createdBy: user.uid,
+      phoneNumber: newPartnerPhone,
+      airbnbUrl: newPartnerLink,
+      photoURL: newPartnerImg, // Listing image
       createdAt: serverTimestamp()
     });
 
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', code), { uid: partnerId });
-    setNewPartnerName(''); setShowNewPartner(false);
+    setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); setShowNewPartner(false);
     
     // Abrir QR automáticamente tras crear
     setViewingQR(code);
   };
 
+  // --- TERMINAL LOGIC: IDENTIFY PARTNER ---
+  const identifyCode = async () => {
+    if(!customerCode) return;
+    setIdentifiedPartner(null);
+    setTerminalMsg(null);
+    
+    try {
+      const code = customerCode.toUpperCase();
+      const codeRef = doc(db, 'artifacts', appId, 'public', 'data', 'codes', code);
+      const codeSnap = await getDoc(codeRef);
+      
+      if(codeSnap.exists()) {
+         const uid = codeSnap.data().uid;
+         const userRef = doc(db, 'artifacts', appId, 'users', uid);
+         const userSnap = await getDoc(userRef);
+         if(userSnap.exists()) {
+            setIdentifiedPartner(userSnap.data());
+         }
+      } else {
+        setTerminalMsg({type: 'error', text: 'Código no encontrado'});
+      }
+    } catch(e) { console.error(e); }
+  };
+
   const processSale = async () => {
       if (!billAmount || !customerCode) return;
       try {
-        const codeSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', customerCode.toUpperCase()));
+        const code = customerCode.toUpperCase();
+        const codeSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', code));
         if (!codeSnap.exists()) throw new Error("Código inválido");
         const refId = codeSnap.data().uid;
         const amount = parseFloat(billAmount);
@@ -455,13 +486,16 @@ const RestaurantPanel = ({ user, userData }) => {
            });
         });
         setTerminalMsg({type: 'success', text: `Venta registrada.`});
-        setBillAmount(''); setCustomerCode('');
+        setBillAmount(''); setCustomerCode(''); setIdentifiedPartner(null);
       } catch(e) { setTerminalMsg({type:'error', text: e.message}); }
   };
 
-  // --- NUEVA FUNCIÓN DE QR REAL ---
-  const downloadQR = (code) => {
-    setViewingQR(code);
+  const downloadQR = (code) => { setViewingQR(code); };
+
+  const openWhatsApp = (phone) => {
+     if(!phone) return;
+     const clean = phone.replace(/\D/g, '');
+     window.open(`https://wa.me/${clean}`, '_blank');
   };
 
   return (
@@ -485,20 +519,65 @@ const RestaurantPanel = ({ user, userData }) => {
         
         {/* TAB: TERMINAL */}
         {activeTab === 'terminal' && (
-           <div className="max-w-md mx-auto mt-10 bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl">
-              <h3 className="text-xl font-bold mb-6 flex items-center gap-2"><Coffee className="text-orange-400"/> Terminal de Venta</h3>
-              <p className="text-slate-400 text-sm mb-6">Ingresa el código del Huésped (Airbnb) o Influencer.</p>
-              <div className="space-y-4">
-                <div>
-                   <label className="text-xs text-slate-500 uppercase tracking-widest">Total Cuenta</label>
-                   <div className="relative mt-1"><span className="absolute left-3 top-3 text-slate-500">$</span><input type="number" value={billAmount} onChange={e=>setBillAmount(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-xl py-3 pl-8 pr-4 text-white text-xl" placeholder="0.00"/></div>
+           <div className="max-w-md mx-auto mt-10">
+              <div className="bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl mb-6">
+                <h3 className="text-xl font-bold mb-6 flex items-center gap-2"><Coffee className="text-orange-400"/> Terminal de Venta</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-slate-500 uppercase tracking-widest">Código Promocional</label>
+                    <div className="flex gap-2 mt-1">
+                        <input type="text" value={customerCode} onChange={e=>setCustomerCode(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white text-xl uppercase tracking-widest" placeholder="HOST-XXXX"/>
+                        <Button onClick={identifyCode} icon={Search} className="px-6">Buscar</Button>
+                    </div>
+                  </div>
+
+                  {identifiedPartner && (
+                      <div className="bg-slate-900 border border-slate-600 rounded-xl p-4 animate-fade-in">
+                          <div className="flex gap-4">
+                              <div className="w-20 h-20 bg-slate-800 rounded-lg overflow-hidden flex-shrink-0">
+                                  {identifiedPartner.photoURL ? (
+                                      <img src={identifiedPartner.photoURL} alt="Airbnb" className="w-full h-full object-cover"/>
+                                  ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-slate-500"><Home size={24}/></div>
+                                  )}
+                              </div>
+                              <div className="flex-1 overflow-hidden">
+                                  <h4 className="font-bold text-white truncate">{identifiedPartner.displayName}</h4>
+                                  <p className="text-xs text-orange-400 mb-2 uppercase">{identifiedPartner.role === 'partner' ? 'Host Airbnb (3%)' : 'Influencer (10%)'}</p>
+                                  <div className="flex gap-2 overflow-x-auto pb-2">
+                                      {identifiedPartner.airbnbUrl && (
+                                          <a href={identifiedPartner.airbnbUrl} target="_blank" rel="noreferrer" className="bg-pink-600/20 text-pink-400 p-2 rounded-lg hover:bg-pink-600/30 transition-colors" title="Ver en Airbnb">
+                                              <ExternalLink size={16}/>
+                                          </a>
+                                      )}
+                                      {identifiedPartner.phoneNumber && (
+                                          <>
+                                            <button onClick={()=>openWhatsApp(identifiedPartner.phoneNumber)} className="bg-green-500/20 text-green-400 p-2 rounded-lg hover:bg-green-500/30 transition-colors" title="WhatsApp">
+                                                <MessageCircle size={16}/>
+                                            </button>
+                                            <a href={`tel:${identifiedPartner.phoneNumber}`} className="bg-blue-500/20 text-blue-400 p-2 rounded-lg hover:bg-blue-500/30 transition-colors" title="Llamar">
+                                                <Phone size={16}/>
+                                            </a>
+                                          </>
+                                      )}
+                                  </div>
+                              </div>
+                          </div>
+                          {identifiedPartner.role === 'partner' && <div className="mt-2 text-xs text-green-400 bg-green-900/20 p-2 rounded text-center">✅ Huésped verificado - Aplicar Refill</div>}
+                      </div>
+                  )}
+
+                  <div>
+                    <label className="text-xs text-slate-500 uppercase tracking-widest">Total Cuenta</label>
+                    <div className="relative mt-1"><span className="absolute left-3 top-3 text-slate-500">$</span><input type="number" value={billAmount} onChange={e=>setBillAmount(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-xl py-3 pl-8 pr-4 text-white text-xl" placeholder="0.00"/></div>
+                  </div>
+                  
+                  {terminalMsg && <p className={`text-sm text-center p-2 rounded ${terminalMsg.type === 'error' ? 'text-red-400 bg-red-900/20' : 'text-green-400 bg-green-900/20'}`}>{terminalMsg.text}</p>}
+                  
+                  <Button onClick={processSale} className="w-full py-4 text-lg mt-2" disabled={!identifiedPartner && !customerCode}>
+                      {identifiedPartner ? `Cobrar y Pagar Comisión (${identifiedPartner.role === 'partner' ? '3%' : '10%'})` : 'Registrar'}
+                  </Button>
                 </div>
-                <div>
-                   <label className="text-xs text-slate-500 uppercase tracking-widest">Código Promocional</label>
-                   <input type="text" value={customerCode} onChange={e=>setCustomerCode(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white text-xl uppercase tracking-widest" placeholder="HOST-XXXX"/>
-                </div>
-                {terminalMsg && <p className={`text-sm text-center p-2 rounded ${terminalMsg.type === 'error' ? 'text-red-400 bg-red-900/20' : 'text-green-400 bg-green-900/20'}`}>{terminalMsg.text}</p>}
-                <Button onClick={processSale} className="w-full py-4 text-lg mt-2">Registrar & Calcular</Button>
               </div>
            </div>
         )}
@@ -516,10 +595,19 @@ const RestaurantPanel = ({ user, userData }) => {
 
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                {partners.map(p => (
-                 <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group">
+                 <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group hover:border-pink-500/50 transition-colors">
                    <div className="absolute top-0 right-0 p-2 opacity-10"><Home size={60}/></div>
-                   <h4 className="font-bold text-lg mb-1">{p.displayName}</h4>
-                   <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-600 inline-block mb-4">
+                   <div className="flex items-center gap-3 mb-3">
+                      <div className="w-12 h-12 bg-slate-700 rounded-lg overflow-hidden">
+                        {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-500"><Home size={16}/></div>}
+                      </div>
+                      <div className="overflow-hidden">
+                         <h4 className="font-bold text-lg truncate">{p.displayName}</h4>
+                         <a href={p.airbnbUrl} target="_blank" rel="noreferrer" className="text-xs text-pink-400 hover:underline flex items-center gap-1"><ExternalLink size={10}/> Ver Listing</a>
+                      </div>
+                   </div>
+                   
+                   <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-600 inline-block mb-4 w-full text-center">
                      <p className="font-mono text-xl tracking-widest text-pink-400 font-bold">{p.referralCode}</p>
                    </div>
                    <div className="flex justify-between items-end">
@@ -572,9 +660,27 @@ const RestaurantPanel = ({ user, userData }) => {
 
              <Modal isOpen={showNewPartner} onClose={()=>setShowNewPartner(false)} title="Registrar Host Airbnb">
                <p className="text-sm text-gray-500 mb-4">Se generará un código único con 3% de comisión fija.</p>
-               <label className="block text-xs font-bold text-gray-500 mb-1">Nombre del Host / Propiedad</label>
-               <input type="text" value={newPartnerName} onChange={e=>setNewPartnerName(e.target.value)} placeholder="Ej. Casa Azul Centro" className="w-full px-4 py-3 rounded-xl border border-gray-200 mb-6 text-gray-800"/>
-               <Button onClick={createPartner} className="w-full">Generar Código</Button>
+               
+               <div className="space-y-3">
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Nombre del Host / Propiedad</label>
+                    <input type="text" value={newPartnerName} onChange={e=>setNewPartnerName(e.target.value)} placeholder="Ej. Casa Azul Centro" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
+                 </div>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Teléfono (con Clave País)</label>
+                    <input type="tel" value={newPartnerPhone} onChange={e=>setNewPartnerPhone(e.target.value)} placeholder="Ej. +52 999 123 4567" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
+                 </div>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Link Perfil Airbnb</label>
+                    <input type="url" value={newPartnerLink} onChange={e=>setNewPartnerLink(e.target.value)} placeholder="https://airbnb.com/..." className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
+                 </div>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Foto del Hospedaje (URL)</label>
+                    <input type="url" value={newPartnerImg} onChange={e=>setNewPartnerImg(e.target.value)} placeholder="https://..." className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
+                 </div>
+               </div>
+
+               <Button onClick={createPartner} className="w-full mt-6">Generar Código</Button>
              </Modal>
 
              {/* MODAL QR REAL */}
