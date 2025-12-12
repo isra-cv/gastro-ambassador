@@ -37,9 +37,12 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v5-metrics';
 
 // ------------------------------------------------------------------
-// CONFIGURACIÓN DE MARCA
+// CONFIGURACIÓN DE MARCA (LOGO MIMOS Y BESITOS)
 // ------------------------------------------------------------------
-// (Logo eliminado a petición del usuario)
+// IMPORTANTE: Sustituye esta URL por la URL pública de tu logo en Firebase Storage.
+// Si no pones una URL válida, el QR saldrá con un icono roto en el centro o fallará.
+// Usa una imagen PNG cuadrada preferiblemente.
+const LOGO_URL = "https://firebasestorage.googleapis.com/v0/b/YOUR-BUCKET.appspot.com/o/logo.png?alt=media"; 
 
 // Inicialización
 const app = initializeApp(firebaseConfig);
@@ -66,6 +69,7 @@ const formatDate = (timestamp) => {
 };
 
 const formatTime = (date) => {
+  if (!date) return '--:--';
   return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
 };
 
@@ -149,26 +153,17 @@ const WelcomeScreen = () => {
       await checkUserRecord(result.user);
     } catch (err) {
       console.error("Google Auth Error:", err);
-      // Fallback a anónimo si falla Google
       try {
         const result = await signInAnonymously(auth);
         await checkUserRecord(result.user);
       } catch (anonErr) { 
         console.error("Anonymous Auth Error:", anonErr);
-        
-        // Manejo de errores detallado para ayudarte a depurar
         let msg = "Error de autenticación.";
-        
         if (err.code === 'auth/unauthorized-domain') {
-          msg = "⚠️ Dominio no autorizado. Ve a Firebase Console > Authentication > Settings > Dominios autorizados y agrega este dominio.";
+          msg = "⚠️ Dominio no autorizado. Ve a Firebase Console > Authentication > Settings > Dominios autorizados.";
         } else if (err.code === 'auth/api-key-not-valid') {
-          msg = "⚠️ API Key inválida. Verifica que hayas copiado correctamente tu 'firebaseConfig' en el código.";
-        } else if (err.code === 'auth/operation-not-allowed' || anonErr.code === 'auth/operation-not-allowed') {
-          msg = "⚠️ Proveedor deshabilitado. Habilita 'Google' y 'Anónimo' en Firebase Console > Authentication > Sign-in method.";
-        } else if (err.message) {
-          msg = `Error: ${err.message}`;
+          msg = "⚠️ API Key inválida. Verifica tu configuración.";
         }
-        
         setError(msg); 
       }
     } finally { setLoading(false); }
@@ -362,8 +357,6 @@ const RestaurantPanel = ({ user, userData }) => {
   // Forms & Modals
   const [promoForm, setPromoForm] = useState({ id: null, title: '', reward: '', platform: 'instagram' });
   const [isEditing, setIsEditing] = useState(false);
-  
-  // Partner Create Form
   const [showNewPartner, setShowNewPartner] = useState(false);
   const [newPartnerName, setNewPartnerName] = useState('');
   const [newPartnerPhone, setNewPartnerPhone] = useState('');
@@ -372,7 +365,7 @@ const RestaurantPanel = ({ user, userData }) => {
 
   // Partner Details & Search
   const [partnerSearchTerm, setPartnerSearchTerm] = useState('');
-  const [selectedPartner, setSelectedPartner] = useState(null); // Para ver detalles
+  const [selectedPartner, setSelectedPartner] = useState(null); 
   const [selectedPartnerStats, setSelectedPartnerStats] = useState(null);
   
   // Terminal
@@ -380,18 +373,15 @@ const RestaurantPanel = ({ user, userData }) => {
   const [customerCode, setCustomerCode] = useState('');
   const [terminalMsg, setTerminalMsg] = useState(null);
   const [identifiedPartner, setIdentifiedPartner] = useState(null); 
-  const [checkInTime, setCheckInTime] = useState(null); // NUEVO: Hora de apertura de mesa
+  const [checkInTime, setCheckInTime] = useState(null); 
 
   useEffect(() => {
-    // Listeners
     const qPending = query(collection(db, 'artifacts', appId, 'tasks'), where('restaurantId', '==', user.uid), where('status', '==', 'pending_review'));
     const unsubPending = onSnapshot(qPending, (snap) => setPendingReviews(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    // Partners (Airbnb hosts)
     const qPartners = query(collection(db, 'artifacts', appId, 'users'), where('createdBy', '==', user.uid), where('role', '==', 'partner'));
     const unsubPartners = onSnapshot(qPartners, (snap) => setPartners(snap.docs.map(d => ({id:d.id, ...d.data()}))));
 
-    // Fetch History Log (Bitácora completa)
     const qHist = query(collection(db, 'artifacts', appId, 'users', user.uid, 'history'), orderBy('createdAt', 'desc'));
     const unsubHist = onSnapshot(qHist, (snap) => {
         const logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -401,43 +391,7 @@ const RestaurantPanel = ({ user, userData }) => {
     return () => { unsubPending(); unsubPartners(); unsubHist(); };
   }, [user]);
 
-  // --- DERIVED DATA / STATS ---
-  const getPartnerStats = (partnerCode) => {
-      // Filtrar logs de este partner
-      const logs = partnerLog.filter(l => l.beneficiaryCode === partnerCode);
-      const totalVisits = logs.length;
-      
-      const currentMonth = new Date().getMonth();
-      const currentYear = new Date().getFullYear();
-
-      const currentMonthLogs = logs.filter(l => {
-          if(!l.createdAt) return false;
-          const d = new Date(l.createdAt.seconds * 1000);
-          return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-      });
-
-      const monthCommission = currentMonthLogs.reduce((acc, curr) => acc + (curr.commission || 0), 0);
-      return { totalVisits, monthCommission };
-  };
-
-  const getMonthlyBreakdown = (partnerCode) => {
-    const logs = partnerLog.filter(l => l.beneficiaryCode === partnerCode);
-    const breakdown = {};
-    
-    logs.forEach(log => {
-        if(!log.createdAt) return;
-        const d = new Date(log.createdAt.seconds * 1000);
-        const key = `${d.getFullYear()}-${d.getMonth()}`;
-        if(!breakdown[key]) breakdown[key] = { month: d.getMonth(), year: d.getFullYear(), amount: 0, visits: 0 };
-        breakdown[key].amount += (log.commission || 0);
-        breakdown[key].visits += 1;
-    });
-    
-    return Object.values(breakdown).sort((a,b) => b.year - a.year || b.month - a.month);
-  };
-
   // --- ACTIONS ---
-
   const handleApproveReview = async (task) => {
     try {
       await runTransaction(db, async (t) => {
@@ -470,18 +424,15 @@ const RestaurantPanel = ({ user, userData }) => {
       createdBy: user.uid,
       phoneNumber: newPartnerPhone,
       airbnbUrl: newPartnerLink,
-      photoURL: newPartnerImg, // Listing image
+      photoURL: newPartnerImg, 
       createdAt: serverTimestamp()
     });
 
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', code), { uid: partnerId });
     setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); setShowNewPartner(false);
-    
-    // Abrir QR automáticamente tras crear
     setViewingQR(code);
   };
 
-  // --- TERMINAL LOGIC: IDENTIFY PARTNER ---
   const identifyCode = async () => {
     if(!customerCode) return;
     setIdentifiedPartner(null);
@@ -499,7 +450,7 @@ const RestaurantPanel = ({ user, userData }) => {
          const userSnap = await getDoc(userRef);
          if(userSnap.exists()) {
             setIdentifiedPartner(userSnap.data());
-            setCheckInTime(new Date()); // Registrar hora de apertura/identificación
+            setCheckInTime(new Date()); 
          }
       } else {
         setTerminalMsg({type: 'error', text: 'Código no encontrado'});
@@ -542,12 +493,20 @@ const RestaurantPanel = ({ user, userData }) => {
              beneficiaryCode: infData.referralCode,
              isPartnerSale: isPartner, 
              createdAt: serverTimestamp(),
-             checkInTime: checkInTime ? checkInTime.toISOString() : null // Guardar la hora de apertura si existe
+             checkInTime: checkInTime ? checkInTime.toISOString() : null 
            });
         });
         setTerminalMsg({type: 'success', text: `Venta registrada.`});
         setBillAmount(''); setCustomerCode(''); setIdentifiedPartner(null); setCheckInTime(null);
       } catch(e) { setTerminalMsg({type:'error', text: e.message}); }
+  };
+
+  const handleSavePromo = async () => {
+    if(!promoForm.title || !promoForm.reward) return;
+    const data = { title: promoForm.title, reward: parseInt(promoForm.reward), platform: promoForm.platform };
+    if (promoForm.id) { await updateDoc(doc(db, 'artifacts', appId, 'promotions', promoForm.id), data); } 
+    else { await addDoc(collection(db, 'artifacts', appId, 'promotions'), { restaurantId: user.uid, restaurantName: userData.displayName, ...data, active: true, createdAt: serverTimestamp() }); }
+    setPromoForm({ id: null, title: '', reward: '', platform: 'instagram' }); setIsEditing(false);
   };
 
   const downloadQR = (code) => { setViewingQR(code); };
@@ -560,10 +519,21 @@ const RestaurantPanel = ({ user, userData }) => {
 
   const openPartnerDetails = (partner) => {
       setSelectedPartner(partner);
-      setSelectedPartnerStats(getMonthlyBreakdown(partner.referralCode));
+      
+      const logs = partnerLog.filter(l => l.beneficiaryCode === partner.referralCode);
+      const breakdown = {};
+      logs.forEach(log => {
+          if(!log.createdAt) return;
+          const d = new Date(log.createdAt.seconds * 1000);
+          const key = `${d.getFullYear()}-${d.getMonth()}`;
+          if(!breakdown[key]) breakdown[key] = { month: d.getMonth(), year: d.getFullYear(), amount: 0, visits: 0 };
+          breakdown[key].amount += (log.commission || 0);
+          breakdown[key].visits += 1;
+      });
+      setSelectedPartnerStats(Object.values(breakdown).sort((a,b) => b.year - a.year || b.month - a.month));
   };
 
-  // Filter partners by search
+  // Filter partners
   const filteredPartners = partners.filter(p => 
       p.displayName.toLowerCase().includes(partnerSearchTerm.toLowerCase()) || 
       p.referralCode.includes(partnerSearchTerm.toUpperCase())
@@ -605,7 +575,7 @@ const RestaurantPanel = ({ user, userData }) => {
                   {identifiedPartner && (
                       <div className="bg-slate-900 border border-slate-600 rounded-xl p-4 animate-fade-in space-y-4">
                           
-                          {/* 1. TARJETA VISUAL DEL CÓDIGO (NUEVO) */}
+                          {/* 1. TARJETA VISUAL DEL CÓDIGO (MESA ABIERTA) */}
                           <div className="bg-white rounded-lg p-6 flex flex-col items-center justify-center text-slate-900 shadow-lg aspect-square">
                               <p className="text-sm text-gray-400 mb-2 uppercase tracking-wider font-bold">Mesa Abierta</p>
                               <div className="text-3xl font-black font-mono tracking-widest text-center break-all mb-4">
@@ -668,7 +638,7 @@ const RestaurantPanel = ({ user, userData }) => {
            </div>
         )}
 
-        {/* TAB: PARTNERS (AIRBNB) - Sin cambios mayores, solo ref visual */}
+        {/* TAB: PARTNERS */}
         {activeTab === 'partners' && (
           <div className="max-w-6xl mx-auto animate-fade-in">
              <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
@@ -693,7 +663,14 @@ const RestaurantPanel = ({ user, userData }) => {
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
                {filteredPartners.map(p => {
-                 const stats = getPartnerStats(p.referralCode);
+                 const logs = partnerLog.filter(l => l.beneficiaryCode === p.referralCode);
+                 const currentMonth = new Date().getMonth();
+                 const monthCommission = logs.filter(l => {
+                    if(!l.createdAt) return false;
+                    const d = new Date(l.createdAt.seconds * 1000);
+                    return d.getMonth() === currentMonth;
+                 }).reduce((acc, curr) => acc + (curr.commission || 0), 0);
+
                  return (
                    <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group hover:border-pink-500/50 transition-colors cursor-pointer" onClick={() => openPartnerDetails(p)}>
                      <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><Home size={80}/></div>
@@ -713,11 +690,11 @@ const RestaurantPanel = ({ user, userData }) => {
                      <div className="grid grid-cols-2 gap-2 mb-4 relative z-10">
                         <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
                             <p className="text-[10px] text-slate-500 uppercase">Visitas Total</p>
-                            <p className="text-lg font-bold text-white">{stats.totalVisits}</p>
+                            <p className="text-lg font-bold text-white">{logs.length}</p>
                         </div>
                         <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
                             <p className="text-[10px] text-slate-500 uppercase">Comisión Mes</p>
-                            <p className="text-lg font-bold text-green-400">{formatCurrency(stats.monthCommission)}</p>
+                            <p className="text-lg font-bold text-green-400">{formatCurrency(monthCommission)}</p>
                         </div>
                      </div>
 
@@ -796,15 +773,16 @@ const RestaurantPanel = ({ user, userData }) => {
                     </div>
                 )}
              </Modal>
-             {/* MODAL QR REAL OFICIAL */}
+
+             {/* MODAL QR REAL OFICIAL CON LOGO */}
              <Modal isOpen={!!viewingQR} onClose={() => setViewingQR(null)} title="Código QR Oficial">
                 <div className="flex flex-col items-center justify-center p-4">
                     <p className="text-sm text-gray-500 mb-4 text-center">Escanea este código para asignar la venta a <span className="font-bold text-gray-800">{viewingQR}</span></p>
                     
                     <div className="bg-white p-4 rounded-xl border-2 border-slate-200 mb-6 shadow-inner relative">
-                        {/* QR Estándar limpio y rápido */}
+                        {/* API QuickChart para QR con Logo */}
                         <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${viewingQR}&color=0f172a&bgcolor=ffffff`} 
+                            src={`https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=300&ecLevel=H&margin=1&dark=0f172a&light=ffffff`} 
                             alt="QR Code" 
                             className="w-64 h-64 object-contain"
                         />
@@ -816,7 +794,7 @@ const RestaurantPanel = ({ user, userData }) => {
                             className="w-full"
                             onClick={() => {
                                 const link = document.createElement('a');
-                                link.href = `https://api.qrserver.com/v1/create-qr-code/?size=1000x1000&data=${viewingQR}&color=000000`;
+                                link.href = `https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=1000&ecLevel=H&margin=2`;
                                 link.target = '_blank';
                                 link.download = `QR-${viewingQR}.png`; 
                                 link.click();
