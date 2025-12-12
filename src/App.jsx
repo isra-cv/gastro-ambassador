@@ -7,7 +7,7 @@ import {
   Instagram, Facebook, Video, Map, Globe, Link as LinkIcon,
   XCircle, Check, Search, AlertCircle, Edit, Save, List,
   Home, Coffee, Download, Calendar, Phone, MessageCircle, ExternalLink,
-  ChevronRight, BarChart3, Filter
+  ChevronRight, BarChart3, Filter, Clock
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -36,13 +36,6 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v5-metrics';
 
-// ------------------------------------------------------------------
-// CONFIGURACIÓN DE MARCA (LOGO MIMOS Y BESITOS)
-// ------------------------------------------------------------------
-// REEMPLAZA ESTA URL CON LA URL PÚBLICA DE TU LOGO (Subido a Firebase Storage o cualquier hosting)
-// Para que el QR salga bonito, usa un PNG con fondo transparente o blanco.
-const LOGO_URL = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"; 
-
 // Inicialización
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -65,6 +58,10 @@ const formatDate = (timestamp) => {
   return new Date(timestamp.seconds * 1000).toLocaleString('es-MX', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
+};
+
+const formatTime = (date) => {
+  return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
 };
 
 const getMonthName = (monthIndex) => {
@@ -360,6 +357,7 @@ const RestaurantPanel = ({ user, userData }) => {
   const [customerCode, setCustomerCode] = useState('');
   const [terminalMsg, setTerminalMsg] = useState(null);
   const [identifiedPartner, setIdentifiedPartner] = useState(null); 
+  const [checkInTime, setCheckInTime] = useState(null); // NUEVO: Hora de apertura de mesa
 
   useEffect(() => {
     // Listeners
@@ -465,6 +463,7 @@ const RestaurantPanel = ({ user, userData }) => {
     if(!customerCode) return;
     setIdentifiedPartner(null);
     setTerminalMsg(null);
+    setCheckInTime(null);
     
     try {
       const code = customerCode.toUpperCase();
@@ -477,6 +476,7 @@ const RestaurantPanel = ({ user, userData }) => {
          const userSnap = await getDoc(userRef);
          if(userSnap.exists()) {
             setIdentifiedPartner(userSnap.data());
+            setCheckInTime(new Date()); // Registrar hora de apertura/identificación
          }
       } else {
         setTerminalMsg({type: 'error', text: 'Código no encontrado'});
@@ -518,11 +518,12 @@ const RestaurantPanel = ({ user, userData }) => {
              beneficiaryName: infData.displayName,
              beneficiaryCode: infData.referralCode,
              isPartnerSale: isPartner, 
-             createdAt: serverTimestamp()
+             createdAt: serverTimestamp(),
+             checkInTime: checkInTime ? checkInTime.toISOString() : null // Guardar la hora de apertura si existe
            });
         });
         setTerminalMsg({type: 'success', text: `Venta registrada.`});
-        setBillAmount(''); setCustomerCode(''); setIdentifiedPartner(null);
+        setBillAmount(''); setCustomerCode(''); setIdentifiedPartner(null); setCheckInTime(null);
       } catch(e) { setTerminalMsg({type:'error', text: e.message}); }
   };
 
@@ -579,9 +580,24 @@ const RestaurantPanel = ({ user, userData }) => {
                   </div>
 
                   {identifiedPartner && (
-                      <div className="bg-slate-900 border border-slate-600 rounded-xl p-4 animate-fade-in">
-                          <div className="flex gap-4">
-                              <div className="w-20 h-20 bg-slate-800 rounded-lg overflow-hidden flex-shrink-0">
+                      <div className="bg-slate-900 border border-slate-600 rounded-xl p-4 animate-fade-in space-y-4">
+                          
+                          {/* 1. TARJETA VISUAL DEL CÓDIGO (NUEVO) */}
+                          <div className="bg-white rounded-lg p-6 flex flex-col items-center justify-center text-slate-900 shadow-lg aspect-square">
+                              <p className="text-sm text-gray-400 mb-2 uppercase tracking-wider font-bold">Mesa Abierta</p>
+                              <div className="text-3xl font-black font-mono tracking-widest text-center break-all mb-4">
+                                {identifiedPartner.referralCode}
+                              </div>
+                              <div className="bg-gray-100 px-4 py-2 rounded-full flex items-center gap-2">
+                                <Clock size={16} className="text-orange-500"/>
+                                <span className="font-bold font-mono text-lg">{checkInTime ? formatTime(checkInTime) : '--:--'}</span>
+                              </div>
+                              <p className="text-xs text-gray-400 mt-2">Hora de Registro</p>
+                          </div>
+
+                          {/* 2. INFO DEL PARTNER */}
+                          <div className="flex gap-4 items-start">
+                              <div className="w-16 h-16 bg-slate-800 rounded-lg overflow-hidden flex-shrink-0 border border-slate-700">
                                   {identifiedPartner.photoURL ? (
                                       <img src={identifiedPartner.photoURL} alt="Airbnb" className="w-full h-full object-cover"/>
                                   ) : (
@@ -610,26 +626,26 @@ const RestaurantPanel = ({ user, userData }) => {
                                   </div>
                               </div>
                           </div>
-                          {identifiedPartner.role === 'partner' && <div className="mt-2 text-xs text-green-400 bg-green-900/20 p-2 rounded text-center">✅ Huésped verificado - Aplicar Refill</div>}
+                          {identifiedPartner.role === 'partner' && <div className="mt-2 text-xs text-green-400 bg-green-900/20 p-2 rounded text-center border border-green-900/50">✅ Huésped verificado - Aplicar Refill</div>}
                       </div>
                   )}
 
-                  <div>
-                    <label className="text-xs text-slate-500 uppercase tracking-widest">Total Cuenta</label>
+                  <div className="pt-4 border-t border-slate-700">
+                    <label className="text-xs text-slate-500 uppercase tracking-widest">Agregar Consumo Final</label>
                     <div className="relative mt-1"><span className="absolute left-3 top-3 text-slate-500">$</span><input type="number" value={billAmount} onChange={e=>setBillAmount(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-xl py-3 pl-8 pr-4 text-white text-xl" placeholder="0.00"/></div>
                   </div>
                   
                   {terminalMsg && <p className={`text-sm text-center p-2 rounded ${terminalMsg.type === 'error' ? 'text-red-400 bg-red-900/20' : 'text-green-400 bg-green-900/20'}`}>{terminalMsg.text}</p>}
                   
                   <Button onClick={processSale} className="w-full py-4 text-lg mt-2" disabled={!identifiedPartner && !customerCode}>
-                      {identifiedPartner ? `Cobrar y Pagar Comisión (${identifiedPartner.role === 'partner' ? '3%' : '10%'})` : 'Registrar'}
+                      {identifiedPartner ? `Cerrar Mesa y Pagar Comisión` : 'Registrar'}
                   </Button>
                 </div>
               </div>
            </div>
         )}
 
-        {/* TAB: PARTNERS (AIRBNB) */}
+        {/* TAB: PARTNERS (AIRBNB) - Sin cambios mayores, solo ref visual */}
         {activeTab === 'partners' && (
           <div className="max-w-6xl mx-auto animate-fade-in">
              <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
@@ -659,7 +675,6 @@ const RestaurantPanel = ({ user, userData }) => {
                    <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group hover:border-pink-500/50 transition-colors cursor-pointer" onClick={() => openPartnerDetails(p)}>
                      <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><Home size={80}/></div>
                      
-                     {/* Header Card */}
                      <div className="flex items-start gap-3 mb-4 relative z-10">
                         <div className="w-14 h-14 bg-slate-700 rounded-xl overflow-hidden shrink-0 border border-slate-600">
                           {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-500"><Home size={20}/></div>}
@@ -672,7 +687,6 @@ const RestaurantPanel = ({ user, userData }) => {
                         </div>
                      </div>
                      
-                     {/* Stats Grid */}
                      <div className="grid grid-cols-2 gap-2 mb-4 relative z-10">
                         <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
                             <p className="text-[10px] text-slate-500 uppercase">Visitas Total</p>
@@ -684,7 +698,6 @@ const RestaurantPanel = ({ user, userData }) => {
                         </div>
                      </div>
 
-                     {/* Actions */}
                      <div className="flex justify-between items-center relative z-10 border-t border-slate-700/50 pt-3">
                        <span className="text-xs text-slate-500 flex items-center gap-1">Ver Historial <ChevronRight size={12}/></span>
                        <button 
@@ -727,7 +740,6 @@ const RestaurantPanel = ({ user, userData }) => {
              <Modal isOpen={!!selectedPartner} onClose={() => setSelectedPartner(null)} title="Detalle del Host">
                 {selectedPartner && (
                     <div className="space-y-6">
-                        {/* Profile Header */}
                         <div className="flex items-center gap-4 border-b border-gray-100 pb-4">
                              <div className="w-16 h-16 bg-gray-100 rounded-full overflow-hidden shrink-0 border border-gray-200">
                                  {selectedPartner.photoURL ? <img src={selectedPartner.photoURL} className="w-full h-full object-cover"/> : <Home className="w-8 h-8 m-4 text-gray-400"/>}
@@ -742,7 +754,6 @@ const RestaurantPanel = ({ user, userData }) => {
                              </div>
                         </div>
 
-                        {/* Breakdown Stats */}
                         <div>
                             <h5 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><BarChart3 size={18}/> Comisiones por Mes</h5>
                             <div className="max-h-60 overflow-y-auto pr-2 space-y-2">
@@ -762,17 +773,15 @@ const RestaurantPanel = ({ user, userData }) => {
                     </div>
                 )}
              </Modal>
-
-             {/* MODAL QR REAL CON LOGO */}
+             {/* MODAL QR REAL OFICIAL */}
              <Modal isOpen={!!viewingQR} onClose={() => setViewingQR(null)} title="Código QR Oficial">
                 <div className="flex flex-col items-center justify-center p-4">
                     <p className="text-sm text-gray-500 mb-4 text-center">Escanea este código para asignar la venta a <span className="font-bold text-gray-800">{viewingQR}</span></p>
                     
-                    {/* QR Container */}
                     <div className="bg-white p-4 rounded-xl border-2 border-slate-200 mb-6 shadow-inner relative">
-                        {/* Usamos QuickChart para generar el QR con la imagen incrustada */}
+                        {/* QR Estándar limpio y rápido */}
                         <img 
-                            src={`https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=400&ecLevel=H&margin=1&dark=000000&light=ffffff`} 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${viewingQR}&color=0f172a&bgcolor=ffffff`} 
                             alt="QR Code" 
                             className="w-64 h-64 object-contain"
                         />
@@ -784,14 +793,13 @@ const RestaurantPanel = ({ user, userData }) => {
                             className="w-full"
                             onClick={() => {
                                 const link = document.createElement('a');
-                                // URL de alta resolución para impresión
-                                link.href = `https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=1000&ecLevel=H&margin=2`;
+                                link.href = `https://api.qrserver.com/v1/create-qr-code/?size=1000x1000&data=${viewingQR}&color=000000`;
                                 link.target = '_blank';
-                                link.download = `QR-${viewingQR}.png`; // Nota: download attr a veces es bloqueado por CORS, abrirá en nueva pestaña
+                                link.download = `QR-${viewingQR}.png`; 
                                 link.click();
                             }}
                         >
-                            <Download size={18} className="mr-2"/> Descargar para Imprimir (1:1)
+                            <Download size={18} className="mr-2"/> Descargar para Imprimir
                         </Button>
                         <Button onClick={() => setViewingQR(null)} variant="ghost" className="w-full">Cerrar</Button>
                     </div>
