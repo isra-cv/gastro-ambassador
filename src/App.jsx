@@ -34,15 +34,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   appId: "1:849590508706:web:a1ff8dacf09b0c3760cbfb"
 };
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v5-metrics';
-
-// ------------------------------------------------------------------
-// CONFIGURACIÓN DE MARCA (LOGO MIMOS Y BESITOS)
-// ------------------------------------------------------------------
-// IMPORTANTE: Sustituye esta URL por la URL pública de tu logo en Firebase Storage.
-// Si no pones una URL válida, el QR saldrá con un icono roto en el centro o fallará.
-// Usa una imagen PNG cuadrada preferiblemente.
-const LOGO_URL = "https://firebasestorage.googleapis.com/v0/b/YOUR-BUCKET.appspot.com/o/logo.png?alt=media"; 
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'gastro-ambassador-v5.1-edit-partners';
 
 // Inicialización
 const app = initializeApp(firebaseConfig);
@@ -357,7 +349,10 @@ const RestaurantPanel = ({ user, userData }) => {
   // Forms & Modals
   const [promoForm, setPromoForm] = useState({ id: null, title: '', reward: '', platform: 'instagram' });
   const [isEditing, setIsEditing] = useState(false);
+  
+  // Partner Create/Edit Form
   const [showNewPartner, setShowNewPartner] = useState(false);
+  const [editingPartnerId, setEditingPartnerId] = useState(null); // Nuevo estado para controlar edición
   const [newPartnerName, setNewPartnerName] = useState('');
   const [newPartnerPhone, setNewPartnerPhone] = useState('');
   const [newPartnerLink, setNewPartnerLink] = useState('');
@@ -409,28 +404,69 @@ const RestaurantPanel = ({ user, userData }) => {
     if(confirm("¿Rechazar?")) await updateDoc(doc(db, 'artifacts', appId, 'tasks', id), { status: 'rejected' });
   };
 
-  const createPartner = async () => {
+  // Guardar Partner (Crear o Editar)
+  const handleSavePartner = async () => {
     if (!newPartnerName) return;
-    const partnerId = `PARTNER-${Date.now()}`;
-    const code = generateReferralCode(newPartnerName, 'HOST-');
 
-    await setDoc(doc(db, 'artifacts', appId, 'users', partnerId), {
-      uid: partnerId,
-      displayName: newPartnerName,
-      referralCode: code,
-      role: 'partner',
-      commissionRate: 0.03, // 3% Commission
-      balance: 0,
-      createdBy: user.uid,
-      phoneNumber: newPartnerPhone,
-      airbnbUrl: newPartnerLink,
-      photoURL: newPartnerImg, 
-      createdAt: serverTimestamp()
-    });
+    try {
+        if (editingPartnerId) {
+            // MODO EDICIÓN
+            const partnerRef = doc(db, 'artifacts', appId, 'users', editingPartnerId);
+            await updateDoc(partnerRef, {
+                displayName: newPartnerName,
+                phoneNumber: newPartnerPhone,
+                airbnbUrl: newPartnerLink,
+                photoURL: newPartnerImg
+            });
+            alert("Perfil actualizado correctamente.");
+        } else {
+            // MODO CREACIÓN
+            const partnerId = `PARTNER-${Date.now()}`;
+            const code = generateReferralCode(newPartnerName, 'HOST-');
 
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', code), { uid: partnerId });
-    setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); setShowNewPartner(false);
-    setViewingQR(code);
+            await setDoc(doc(db, 'artifacts', appId, 'users', partnerId), {
+                uid: partnerId,
+                displayName: newPartnerName,
+                referralCode: code,
+                role: 'partner',
+                commissionRate: 0.03,
+                balance: 0,
+                createdBy: user.uid,
+                phoneNumber: newPartnerPhone,
+                airbnbUrl: newPartnerLink,
+                photoURL: newPartnerImg,
+                createdAt: serverTimestamp()
+            });
+
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', code), { uid: partnerId });
+            setViewingQR(code);
+        }
+
+        // Limpiar formulario y cerrar modal
+        setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); 
+        setEditingPartnerId(null);
+        setShowNewPartner(false);
+
+    } catch (e) {
+        console.error(e);
+        alert("Error al guardar.");
+    }
+  };
+
+  const openCreatePartner = () => {
+      setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg('');
+      setEditingPartnerId(null);
+      setShowNewPartner(true);
+  };
+
+  const openEditPartner = (e, p) => {
+      e.stopPropagation(); // Evitar que se abra el modal de detalles
+      setNewPartnerName(p.displayName || '');
+      setNewPartnerPhone(p.phoneNumber || '');
+      setNewPartnerLink(p.airbnbUrl || '');
+      setNewPartnerImg(p.photoURL || '');
+      setEditingPartnerId(p.uid);
+      setShowNewPartner(true);
   };
 
   const identifyCode = async () => {
@@ -531,6 +567,19 @@ const RestaurantPanel = ({ user, userData }) => {
           breakdown[key].visits += 1;
       });
       setSelectedPartnerStats(Object.values(breakdown).sort((a,b) => b.year - a.year || b.month - a.month));
+  };
+
+  const getPartnerStats = (partnerCode) => {
+      const logs = partnerLog.filter(l => l.beneficiaryCode === partnerCode);
+      const totalVisits = logs.length;
+      const currentMonth = new Date().getMonth();
+      const currentMonthLogs = logs.filter(l => {
+          if(!l.createdAt) return false;
+          const d = new Date(l.createdAt.seconds * 1000);
+          return d.getMonth() === currentMonth;
+      });
+      const monthCommission = currentMonthLogs.reduce((acc, curr) => acc + (curr.commission || 0), 0);
+      return { totalVisits, monthCommission };
   };
 
   // Filter partners
@@ -657,20 +706,13 @@ const RestaurantPanel = ({ user, userData }) => {
                       className="w-full bg-slate-800 border border-slate-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-pink-500 outline-none uppercase"
                     />
                  </div>
-                 <Button onClick={()=>setShowNewPartner(true)} icon={Plus} className="bg-pink-600 hover:bg-pink-700 border-none shrink-0">Nuevo Host</Button>
+                 <Button onClick={openCreatePartner} icon={Plus} className="bg-pink-600 hover:bg-pink-700 border-none shrink-0">Nuevo Host</Button>
                </div>
              </div>
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
                {filteredPartners.map(p => {
-                 const logs = partnerLog.filter(l => l.beneficiaryCode === p.referralCode);
-                 const currentMonth = new Date().getMonth();
-                 const monthCommission = logs.filter(l => {
-                    if(!l.createdAt) return false;
-                    const d = new Date(l.createdAt.seconds * 1000);
-                    return d.getMonth() === currentMonth;
-                 }).reduce((acc, curr) => acc + (curr.commission || 0), 0);
-
+                 const stats = getPartnerStats(p.referralCode);
                  return (
                    <div key={p.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 relative overflow-hidden group hover:border-pink-500/50 transition-colors cursor-pointer" onClick={() => openPartnerDetails(p)}>
                      <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><Home size={80}/></div>
@@ -690,23 +732,36 @@ const RestaurantPanel = ({ user, userData }) => {
                      <div className="grid grid-cols-2 gap-2 mb-4 relative z-10">
                         <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
                             <p className="text-[10px] text-slate-500 uppercase">Visitas Total</p>
-                            <p className="text-lg font-bold text-white">{logs.length}</p>
+                            <p className="text-lg font-bold text-white">{stats.totalVisits}</p>
                         </div>
                         <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
                             <p className="text-[10px] text-slate-500 uppercase">Comisión Mes</p>
-                            <p className="text-lg font-bold text-green-400">{formatCurrency(monthCommission)}</p>
+                            <p className="text-lg font-bold text-green-400">{formatCurrency(stats.monthCommission)}</p>
                         </div>
                      </div>
 
                      <div className="flex justify-between items-center relative z-10 border-t border-slate-700/50 pt-3">
                        <span className="text-xs text-slate-500 flex items-center gap-1">Ver Historial <ChevronRight size={12}/></span>
-                       <button 
-                         onClick={(e) => { e.stopPropagation(); downloadQR(p.referralCode); }} 
-                         className="p-2 bg-pink-600 text-white rounded-lg hover:bg-pink-500 transition-colors shadow-lg shadow-pink-900/20"
-                         title="Ver QR"
-                        >
-                         <QrCode size={18}/>
-                       </button>
+                       
+                       <div className="flex gap-2">
+                           {/* EDIT BUTTON */}
+                           <button 
+                             onClick={(e) => openEditPartner(e, p)} 
+                             className="p-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 hover:text-white transition-colors"
+                             title="Editar Perfil"
+                            >
+                             <Edit size={18}/>
+                           </button>
+
+                           {/* QR BUTTON */}
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); downloadQR(p.referralCode); }} 
+                             className="p-2 bg-pink-600 text-white rounded-lg hover:bg-pink-500 transition-colors shadow-lg shadow-pink-900/20"
+                             title="Ver QR"
+                            >
+                             <QrCode size={18}/>
+                           </button>
+                       </div>
                      </div>
                    </div>
                  );
@@ -714,7 +769,7 @@ const RestaurantPanel = ({ user, userData }) => {
                {filteredPartners.length === 0 && <div className="col-span-3 text-center py-10 text-slate-500 bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-700">No se encontraron hosts.</div>}
              </div>
 
-             <Modal isOpen={showNewPartner} onClose={()=>setShowNewPartner(false)} title="Registrar Host Airbnb">
+             <Modal isOpen={showNewPartner} onClose={()=>setShowNewPartner(false)} title={editingPartnerId ? 'Editar Perfil Host' : 'Registrar Host Airbnb'}>
                <div className="space-y-3">
                  <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">Nombre del Host / Propiedad</label>
@@ -733,7 +788,9 @@ const RestaurantPanel = ({ user, userData }) => {
                     <input type="url" value={newPartnerImg} onChange={e=>setNewPartnerImg(e.target.value)} placeholder="https://..." className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
                  </div>
                </div>
-               <Button onClick={createPartner} className="w-full mt-6">Generar Código</Button>
+               <Button onClick={handleSavePartner} className="w-full mt-6">
+                   {editingPartnerId ? 'Guardar Cambios' : 'Generar Código'}
+               </Button>
              </Modal>
 
              {/* MODAL DETALLES DEL PARTNER */}
@@ -774,15 +831,15 @@ const RestaurantPanel = ({ user, userData }) => {
                 )}
              </Modal>
 
-             {/* MODAL QR REAL OFICIAL CON LOGO */}
+             {/* MODAL QR REAL OFICIAL */}
              <Modal isOpen={!!viewingQR} onClose={() => setViewingQR(null)} title="Código QR Oficial">
                 <div className="flex flex-col items-center justify-center p-4">
                     <p className="text-sm text-gray-500 mb-4 text-center">Escanea este código para asignar la venta a <span className="font-bold text-gray-800">{viewingQR}</span></p>
                     
                     <div className="bg-white p-4 rounded-xl border-2 border-slate-200 mb-6 shadow-inner relative">
-                        {/* API QuickChart para QR con Logo */}
+                        {/* QR Estándar limpio y rápido */}
                         <img 
-                            src={`https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=300&ecLevel=H&margin=1&dark=0f172a&light=ffffff`} 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${viewingQR}&color=0f172a&bgcolor=ffffff`} 
                             alt="QR Code" 
                             className="w-64 h-64 object-contain"
                         />
@@ -794,7 +851,7 @@ const RestaurantPanel = ({ user, userData }) => {
                             className="w-full"
                             onClick={() => {
                                 const link = document.createElement('a');
-                                link.href = `https://quickchart.io/qr?text=${viewingQR}&centerImageUrl=${LOGO_URL}&size=1000&ecLevel=H&margin=2`;
+                                link.href = `https://api.qrserver.com/v1/create-qr-code/?size=1000x1000&data=${viewingQR}&color=000000`;
                                 link.target = '_blank';
                                 link.download = `QR-${viewingQR}.png`; 
                                 link.click();
