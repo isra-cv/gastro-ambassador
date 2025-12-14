@@ -357,6 +357,7 @@ const RestaurantPanel = ({ user, userData }) => {
   const [newPartnerPhone, setNewPartnerPhone] = useState('');
   const [newPartnerLink, setNewPartnerLink] = useState('');
   const [newPartnerImg, setNewPartnerImg] = useState('');
+  const [newPartnerCode, setNewPartnerCode] = useState(''); // NEW: Custom manual code
 
   // Partner Details & Search
   const [partnerSearchTerm, setPartnerSearchTerm] = useState('');
@@ -409,20 +410,32 @@ const RestaurantPanel = ({ user, userData }) => {
     if (!newPartnerName) return;
 
     try {
+        let codeToUse = newPartnerCode ? newPartnerCode.toUpperCase() : null;
+
         if (editingPartnerId) {
             // MODO EDICIÓN
             const partnerRef = doc(db, 'artifacts', appId, 'users', editingPartnerId);
-            await updateDoc(partnerRef, {
+            const updateData = {
                 displayName: newPartnerName,
                 phoneNumber: newPartnerPhone,
                 airbnbUrl: newPartnerLink,
                 photoURL: newPartnerImg
-            });
+            };
+            
+            // Si el usuario quiere cambiar el código manualmente
+            if (codeToUse) {
+                 updateData.referralCode = codeToUse;
+                 // Actualizar el mapa público para que sea buscable
+                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'codes', codeToUse), { uid: editingPartnerId });
+            }
+
+            await updateDoc(partnerRef, updateData);
             alert("Perfil actualizado correctamente.");
         } else {
             // MODO CREACIÓN
             const partnerId = `PARTNER-${Date.now()}`;
-            const code = generateReferralCode(newPartnerName, 'HOST-');
+            // Usar código manual si existe, sino generar uno
+            const code = codeToUse || generateReferralCode(newPartnerName, 'HOST-');
 
             await setDoc(doc(db, 'artifacts', appId, 'users', partnerId), {
                 uid: partnerId,
@@ -443,7 +456,7 @@ const RestaurantPanel = ({ user, userData }) => {
         }
 
         // Limpiar formulario y cerrar modal
-        setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); 
+        setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); setNewPartnerCode(''); 
         setEditingPartnerId(null);
         setShowNewPartner(false);
 
@@ -454,7 +467,7 @@ const RestaurantPanel = ({ user, userData }) => {
   };
 
   const openCreatePartner = () => {
-      setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg('');
+      setNewPartnerName(''); setNewPartnerPhone(''); setNewPartnerLink(''); setNewPartnerImg(''); setNewPartnerCode('');
       setEditingPartnerId(null);
       setShowNewPartner(true);
   };
@@ -465,6 +478,7 @@ const RestaurantPanel = ({ user, userData }) => {
       setNewPartnerPhone(p.phoneNumber || '');
       setNewPartnerLink(p.airbnbUrl || '');
       setNewPartnerImg(p.photoURL || '');
+      setNewPartnerCode(p.referralCode || '');
       setEditingPartnerId(p.uid);
       setShowNewPartner(true);
   };
@@ -775,6 +789,20 @@ const RestaurantPanel = ({ user, userData }) => {
                     <label className="block text-xs font-bold text-gray-500 mb-1">Nombre del Host / Propiedad</label>
                     <input type="text" value={newPartnerName} onChange={e=>setNewPartnerName(e.target.value)} placeholder="Ej. Casa Azul Centro" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
                  </div>
+                 
+                 {/* CAMPO NUEVO PARA CÓDIGO MANUAL */}
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Código Personalizado (Opcional)</label>
+                    <input 
+                      type="text" 
+                      value={newPartnerCode} 
+                      onChange={e=>setNewPartnerCode(e.target.value)} 
+                      placeholder="Ej. HOST-YA-EXISTE" 
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800 uppercase font-mono tracking-wide"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Si lo dejas vacío, se generará uno automático.</p>
+                 </div>
+
                  <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">Teléfono (con Clave País)</label>
                     <input type="tel" value={newPartnerPhone} onChange={e=>setNewPartnerPhone(e.target.value)} placeholder="Ej. +52 999 123 4567" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800"/>
